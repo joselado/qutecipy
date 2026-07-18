@@ -1,0 +1,22 @@
+# Vendored Julia reference clones (read-only lookup, not part of this project's
+# own history -- see CLAUDE.md's "Reference source map"). Each is its own git repo.
+/reference/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Julia (in case reference/ instantiation artifacts leak in via other paths)
+Manifest.toml
+
+# Editor/OS
+.DS_Store
+
+# Claude Code local (personal, machine-specific) settings
+.claude/settings.local.json
