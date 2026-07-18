@@ -9,12 +9,12 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from qtcipy.indexset import IndexSet
-from qtcipy.matrix.aca import MatrixACA
-from qtcipy.matrix.luci import MatrixLUCI
-from qtcipy.matrix.rrlu import rrLU
-from qtcipy.tci1 import TensorCI1
-from qtcipy.tci2 import TensorCI2, kronecker_left, kronecker_right
+from qutecipy.indexset import IndexSet
+from qutecipy.matrix.aca import MatrixACA
+from qutecipy.matrix.luci import MatrixLUCI
+from qutecipy.matrix.rrlu import rrLU
+from qutecipy.tci1 import TensorCI1
+from qutecipy.tci2 import TensorCI2, kronecker_left, kronecker_right
 
 _UNBOUNDED_RANK = 2**62
 

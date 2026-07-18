@@ -12,7 +12,7 @@ import time
 
 import numpy as np
 
-from qtcipy.tci2 import crossinterpolate2
+from qutecipy.tci2 import crossinterpolate2
 
 
 def bench_and_report(name, f):

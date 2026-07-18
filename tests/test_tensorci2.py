@@ -3,11 +3,11 @@ import itertools
 import numpy as np
 import pytest
 
-from qtcipy.globalpivot import AbstractGlobalPivotFinder
-from qtcipy.tci2 import (TensorCI2, convergence_criterion, crossinterpolate2,
+from qutecipy.globalpivot import AbstractGlobalPivotFinder
+from qutecipy.tci2 import (TensorCI2, convergence_criterion, crossinterpolate2,
                           kronecker_left, kronecker_right)
-from qtcipy.tensortrain.batcheval import isbatchevaluable
-from qtcipy.tensortrain.core import TensorTrain
+from qutecipy.tensortrain.batcheval import isbatchevaluable
+from qutecipy.tensortrain.core import TensorTrain
 
 
 def _bits_to_x(bits, R):

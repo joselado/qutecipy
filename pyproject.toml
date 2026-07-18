@@ -3,7 +3,7 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "qtcipy"
+name = "qutecipy"
 version = "0.1.0"
 description = "Python port of TensorCrossInterpolation.jl and QuanticsGrids.jl"
 readme = "README.md"
@@ -19,7 +19,7 @@ test = ["pytest>=7", "scipy>=1.10"]
 fast = ["numba>=0.58"]
 
 [tool.setuptools.packages.find]
-include = ["qtcipy*"]
+include = ["qutecipy*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

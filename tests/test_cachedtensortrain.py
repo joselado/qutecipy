@@ -2,7 +2,7 @@ import itertools
 
 import numpy as np
 
-from qtcipy.tensortrain.cache import TTCache
+from qutecipy.tensortrain.cache import TTCache
 
 rng = np.random.default_rng(3)
 

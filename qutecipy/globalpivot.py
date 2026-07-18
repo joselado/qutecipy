@@ -16,8 +16,8 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from qtcipy.tensortrain.cache import TTCache
-from qtcipy.tensortrain.core import TensorTrain
+from qutecipy.tensortrain.cache import TTCache
+from qutecipy.tensortrain.core import TensorTrain
 
 
 @dataclass
@@ -97,7 +97,7 @@ def _floatingzone(
     for _ in range(nsweeps):
         prev_maxerror = maxerror
         for ipos in range(n):
-            from qtcipy.tci2 import filltensor  # local import: avoids a tci2<->globalpivot import cycle
+            from qutecipy.tci2 import filltensor  # local import: avoids a tci2<->globalpivot import cycle
 
             left = [tuple(pivot[:ipos])]
             right = [tuple(pivot[ipos + 1:])]

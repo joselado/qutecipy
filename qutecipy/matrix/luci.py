@@ -15,7 +15,7 @@ from __future__ import annotations
 import numpy as np
 import scipy.linalg
 
-from qtcipy.matrix.rrlu import rrLU, rrlu, rrlu_from_function
+from qutecipy.matrix.rrlu import rrLU, rrlu, rrlu_from_function
 
 
 class MatrixLUCI:

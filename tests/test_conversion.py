@@ -2,9 +2,9 @@ import itertools
 
 import numpy as np
 
-from qtcipy.conversion import tci1_from_tci2, tci2_from_tci1, tci2_from_tensortrain
-from qtcipy.tci2 import crossinterpolate2, optimize
-from qtcipy.tensortrain.core import TensorTrain
+from qutecipy.conversion import tci1_from_tci2, tci2_from_tci1, tci2_from_tensortrain
+from qutecipy.tci2 import crossinterpolate2, optimize
+from qutecipy.tensortrain.core import TensorTrain
 
 
 def test_tci1_tci2_roundtrip():

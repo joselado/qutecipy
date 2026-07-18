@@ -1,9 +1,9 @@
-# qtcipy — Python port of TensorCrossInterpolation.jl
+# qutecipy — Python port of TensorCrossInterpolation.jl
 
 ## Goal
 
 Produce a **full, faithful Python port** of [`TensorCrossInterpolation.jl`](https://github.com/tensor4all/TensorCrossInterpolation.jl)
-(package `qtcipy`), implementing the tensor cross interpolation (TCI) algorithm for
+(package `qutecipy`), implementing the tensor cross interpolation (TCI) algorithm for
 efficient interpolation of multi-index tensors and multivariate functions, plus the
 supporting tensor-train (TT/MPS) infrastructure it depends on.
 
@@ -18,7 +18,7 @@ transitive numerical dependency (`src/gausskronrod.jl`) that needs its own trans
 see "External dependencies" below.
 
 `reference/QuanticsGrids.jl` (shallow clone, MIT license) is also vendored — a second,
-independent library in scope for this port (`qtcipy.quantics`), see "QuanticsGrids"
+independent library in scope for this port (`qutecipy.quantics`), see "QuanticsGrids"
 under External dependencies below.
 
 ## Implementation status
@@ -28,7 +28,7 @@ reference implementation** (both packages instantiated and run locally via
 `julia --project=.` in `reference/`; not just read for reference — their live output
 was diffed against the Python port's output during development).
 
-**Implemented** (`qtcipy/`, ~4300 lines, `tests/`, 100 passing tests) — the full
+**Implemented** (`qutecipy/`, ~4300 lines, `tests/`, 100 passing tests) — the full
 scope of this porting plan, including everything originally listed as "lower
 priority":
 - `util.py`, `indexset.py` — full.
@@ -97,20 +97,20 @@ wall-clock is noisy). Two profiled cases, `crossinterpolate2` with `pivotsearch=
 Profiling (cProfile) showed the gap is **not** primarily algorithmic — it's Python
 interpreter overhead multiplied over millions of small operations, in two flavors:
 1. **Library-side overhead in the generic batch-evaluation fallback**
-   (`qtcipy/tensortrain/batcheval.py::_generic_batchevaluate`): the original
+   (`qutecipy/tensortrain/batcheval.py::_generic_batchevaluate`): the original
    `result[i,c,j] = f(...)` pattern's per-cell numpy `__setitem__` cost *more* than
    calling `f` itself. Fixed by building the whole batch as a flat list comprehension
    and casting once (`np.array(flat, dtype).reshape(...)`) — same iteration order, same
    values, ~4× less library overhead in isolation (confirmed via a controlled
    microbenchmark with a trivial `f`, isolated from system noise). Same fix applied to
-   `CachedFunction._batcheval_default` (`qtcipy/tensortrain/cachedfunction.py`).
+   `CachedFunction._batcheval_default` (`qutecipy/tensortrain/cachedfunction.py`).
 2. **Many small bookkeeping ops** in `sweep2site` (`copy.deepcopy(Iset)` → cheap
    per-site shallow copy, since the tuples inside are immutable and sites are always
    replaced wholesale, never mutated in place), `rrLU._optimize`'s pivot-search argmax
    (dropped a redundant `**2` — `argmax(|x|²) == argmax(|x|)`, and `self.error` re-reads
    the raw value separately), and `SubMatrix.__call__` (precompute row/col `list()`
-   conversions once instead of per inner-loop iteration). All in `qtcipy/tci2.py` and
-   `qtcipy/matrix/rrlu.py`.
+   conversions once instead of per inner-loop iteration). All in `qutecipy/tci2.py` and
+   `qutecipy/matrix/rrlu.py`.
 
 **The single biggest lever, by far, is `CachedFunction`** (already implemented, see
 "Algorithmic layers" below): TCI's pivot search — full and especially rook — re-visits
@@ -122,8 +122,8 @@ wrap it: `crossinterpolate2(dtype, CachedFunction(dtype, f, localdims), localdim
 ...)`. Both `crossinterpolate1` and `crossinterpolate2`'s docstrings point this out.
 
 **`numba.njit` on `rrLU._optimize`'s dense pivoting kernel** (the argmax-scan + rank-1
-update + row/col swaps) — implemented in `qtcipy/matrix/_numba_kernels.py`, a soft
-dependency (`pip install qtcipy[fast]`; falls back to the pure-Python loop, which
+update + row/col swaps) — implemented in `qutecipy/matrix/_numba_kernels.py`, a soft
+dependency (`pip install qutecipy[fast]`; falls back to the pure-Python loop, which
 remains the tested reference, if numba isn't installed or for dtypes/layouts the numba
 path doesn't handle — currently float64/complex128, C-contiguous only). The kernel is a
 direct, tie-break-faithful port (explicit row-major argmax scan with strict `>`,
@@ -185,8 +185,8 @@ its test suite pulls in, and what each one means for the Python port:
 | `QuadGK` | **only** `QuadGK.kronrod(GKorder÷2, -1, 1)` in `integration.jl`, to get Gauss–Kronrod nodes/weights for the unit weight function on a symmetric interval | **Port the specific algorithm needed, not the whole package.** See below — this is the one real numerical dependency that needs actual translation work. |
 | `ITensors`, `ITensorMPS` (weakdeps, only power the `TCIITensorConversion` extension) | not used by core `src/` at all | **Out of scope**, as already noted — no Python ITensors ecosystem target. |
 | `Aqua`, `JET` (test extras) | ambiguity/type-stability static analysis, Julia-specific | No Python equivalent needed; `ruff`/`mypy` in CI cover the rough intent if desired, but this isn't a porting task. |
-| `Optim` (test extra) | `test/test_tensortrain.jl` only — fits a `TensorTrainFit` via `LBFGS()` | The library itself is optimizer-agnostic (`TensorTrainFit`/`flatten`/`to_tensors` just expose a loss function; the user supplies the optimizer). Python equivalent for the **test only**: `scipy.optimize.minimize(method="L-BFGS-B")`. Not a runtime dependency of `qtcipy` itself, matching Julia's design. |
-| `Zygote` (test extra) | same test, supplies the gradient via autodiff | No autodiff dependency planned for `qtcipy` (see "NumPy-only" decision below). For the ported test, use a finite-difference gradient (`scipy.optimize.minimize` can estimate this itself when `jac` is omitted) rather than pulling in `jax`/`autograd` — good enough to exercise `TensorTrainFit` correctness without adding a new dependency. |
+| `Optim` (test extra) | `test/test_tensortrain.jl` only — fits a `TensorTrainFit` via `LBFGS()` | The library itself is optimizer-agnostic (`TensorTrainFit`/`flatten`/`to_tensors` just expose a loss function; the user supplies the optimizer). Python equivalent for the **test only**: `scipy.optimize.minimize(method="L-BFGS-B")`. Not a runtime dependency of `qutecipy` itself, matching Julia's design. |
+| `Zygote` (test extra) | same test, supplies the gradient via autodiff | No autodiff dependency planned for `qutecipy` (see "NumPy-only" decision below). For the ported test, use a finite-difference gradient (`scipy.optimize.minimize` can estimate this itself when `jac` is omitted) rather than pulling in `jax`/`autograd` — good enough to exercise `TensorTrainFit` correctness without adding a new dependency. |
 | `QuanticsGrids` (test extra, separate `tensor4all/QuanticsGrids.jl` repo) | `test/test_tensorci2.jl`, `test/test_globalsearch.jl`, `test/test_cachedtensortrain.jl` — builds realistic quantics-representation test functions (`DiscretizedGrid`, `quantics_to_origcoord`, `origcoord_to_quantics`) | **Out of core scope, but flagged** — see below. |
 
 ### QuadGK — porting the Gauss–Kronrod node/weight algorithm
@@ -211,7 +211,7 @@ version. That branch is a self-contained ~150-line numerical algorithm (Laurie 1
    3-term-recurrence back-substitution — no solver needed, just a loop) to obtain
    the quadrature weight.
 
-**Decision: port this subset directly into `qtcipy/gausskronrod.py`** (numpy +
+**Decision: port this subset directly into `qutecipy/gausskronrod.py`** (numpy +
 `scipy.linalg.eigh_tridiagonal`), rather than taking a dependency on `quadpy` (its
 modern releases carry a non-free "Tidelift" license — avoid) or hand-maintaining a
 table of hardcoded node/weight constants (works for the default `GKorder=15` but
@@ -222,14 +222,14 @@ path, not `gauss()`'s general-Jacobi-matrix API surface, not `BigFloat`/arbitrar
 precision, not the `@generated`-function result-caching trick (a plain Python
 `functools.lru_cache` on `(n,)` covers that).
 
-### QuanticsGrids — in scope: `qtcipy.quantics`
+### QuanticsGrids — in scope: `qutecipy.quantics`
 
 `QuanticsGrids.jl` is a separate tensor4all package (grid ↔ quantics-bitstring
 coordinate mapping) that `QuanticsTCI.jl` builds on top of `TensorCrossInterpolation.jl`
 for exponentially efficient function interpolation with scale separation. It is
 **not** a dependency of the core TCI algorithm itself, only of a few of its *tests* —
 but per user decision, this port covers it too, as a second, independent top-level
-subpackage (`qtcipy.quantics`), matching the `qtcipy` name's implication of covering
+subpackage (`qutecipy.quantics`), matching the `qutecipy` name's implication of covering
 the full quantics-TCI stack, not just base cross-interpolation.
 
 Cloned for reference at `reference/QuanticsGrids.jl` (MIT license, same authorship as
@@ -272,7 +272,7 @@ bit-for-bit), `:grouped` (all of dimension 1's digits, then all of dimension 2's
 ...), or a fully custom `indextable` passed directly. Preserve all four faithfully —
 they're heavily cross-tested for exact equality against hand-computed tables.
 
-**Public API to port** (`qtcipy/quantics/`): `quantics_to_grididx`,
+**Public API to port** (`qutecipy/quantics/`): `quantics_to_grididx`,
 `grididx_to_quantics`, `grididx_to_origcoord`, `origcoord_to_grididx`,
 `origcoord_to_quantics`, `quantics_to_origcoord` (the last two are trivial
 compositions of the first four), plus `quanticsfunction` (wraps a coordinate-space
@@ -322,7 +322,7 @@ dimension) is a valid, tested edge case; `step[d]=0` on `InherentDiscreteGrid` i
   `divmod`) is enough for the Python port — don't bother porting the base-2
   special-case unless profiling later shows it matters.
 
-Port `qtcipy/quantics/` fully (both grid types, all four conversion directions, all
+Port `qutecipy/quantics/` fully (both grid types, all four conversion directions, all
 three unfolding schemes plus custom index tables) and translate its test suite
 (`test/grid_tests.jl`, `discretizedgrid_misc_tests.jl`,
 `inherentdiscretegrid_tests.jl`, `quantics_tests.jl`, `origcoord_tests.jl`,
@@ -331,14 +331,14 @@ three unfolding schemes plus custom index tables) and translate its test suite
 a subtle Python/NumPy floating-point translation bug. `QuanticsTCI.jl` itself
 (the layer that actually *combines* `QuanticsGrids` + `TensorCrossInterpolation` into
 one high-level "interpolate a scale-separated function" API) remains out of scope for
-this task — `qtcipy.quantics` and the core `qtcipy` TCI port are both ported as
+this task — `qutecipy.quantics` and the core `qutecipy` TCI port are both ported as
 independent, complete libraries; wiring them together end-to-end (mirroring
 `QuanticsTCI.jl`) can be a natural follow-up once both are solid.
 
 ## Target Python package layout (proposed)
 
 ```
-qtcipy/
+qutecipy/
   __init__.py            # public API: crossinterpolate1, crossinterpolate2, TensorTrain, ...
   util.py                 # util.jl + sweepstrategies.jl
   indexset.py             # indexset.jl
@@ -372,7 +372,7 @@ tests/
   # against reference/QuadGK.jl's own precomputed values (e.g. its hardcoded n=7 xd7/wd7/wgd7)
 reference/TensorCrossInterpolation.jl/   # vendored Julia source, read-only, for lookup
 reference/QuadGK.jl/                     # vendored Julia source, read-only, for the kronrod() port
-reference/QuanticsGrids.jl/              # vendored Julia source, read-only, for qtcipy.quantics
+reference/QuanticsGrids.jl/              # vendored Julia source, read-only, for qutecipy.quantics
 pyproject.toml
 ```
 
@@ -606,12 +606,12 @@ for `crossinterpolate1`/`crossinterpolate2`.
 - Whether to target NumPy-only or allow optional JAX/PyTorch backends for
   autodiff/GPU (Julia version has no such backend abstraction — recommend NumPy-only
   for the initial faithful port, revisit later).
-- **Scope of the quantics-TCI ecosystem**: this project is named `qtcipy`, which
+- **Scope of the quantics-TCI ecosystem**: this project is named `qutecipy`, which
   reads as "quantics TCI python" — but `QuanticsGrids.jl`/`QuanticsTCI.jl` (the
   packages that actually add the quantics representation on top of
   `TensorCrossInterpolation.jl`) are currently out of scope per the "External
   dependencies" audit above, since only `TensorCrossInterpolation.jl` itself was
-  requested for translation. Worth confirming with the user whether `qtcipy` is
+  requested for translation. Worth confirming with the user whether `qutecipy` is
   meant to eventually cover the full quantics-TCI stack (in which case
   `QuanticsGrids.jl` deserves its own porting plan alongside this one) or is scoped
   to the base cross-interpolation library only, with the name chosen for other

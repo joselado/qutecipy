@@ -2,8 +2,8 @@ import itertools
 
 import numpy as np
 
-from qtcipy.tci1 import TensorCI1, crossinterpolate1
-from qtcipy.tensortrain.core import TensorTrain
+from qutecipy.tci1 import TensorCI1, crossinterpolate1
+from qutecipy.tensortrain.core import TensorTrain
 
 
 def test_trivial_mps():

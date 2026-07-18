@@ -12,8 +12,8 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from qtcipy.matrix._numba_kernels import HAVE_NUMBA, _rrlu_pivot_kernel
-from qtcipy.util import pushrandomsubset
+from qutecipy.matrix._numba_kernels import HAVE_NUMBA, _rrlu_pivot_kernel
+from qutecipy.util import pushrandomsubset
 
 _NUMBA_DTYPES = (np.dtype(np.float64), np.dtype(np.complex128))
 
@@ -78,7 +78,7 @@ class rrLU:
         maxrank = min(maxrank if maxrank is not None else min(A.shape), A.shape[0], A.shape[1])
 
         # numba path: same algorithm (identical argmax tie-breaking, identical stopping
-        # rule), just compiled -- see qtcipy/matrix/_numba_kernels.py. Falls back to the
+        # rule), just compiled -- see qutecipy/matrix/_numba_kernels.py. Falls back to the
         # pure-Python loop below for dtypes numba can't safely handle here (e.g. integer,
         # which numpy's own in-place division would already reject) or if numba isn't
         # installed at all.

@@ -3,8 +3,8 @@ import itertools
 import numpy as np
 import pytest
 
-from qtcipy.contraction import Contraction, contract
-from qtcipy.tensortrain.core import TensorTrain
+from qutecipy.contraction import Contraction, contract
+from qutecipy.tensortrain.core import TensorTrain
 
 rng = np.random.default_rng(0)
 

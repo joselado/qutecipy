@@ -4,7 +4,7 @@ import numpy as np
 import pytest
 import scipy.optimize
 
-from qtcipy.tensortrain.core import TensorTrain, TensorTrainFit, add, subtract
+from qutecipy.tensortrain.core import TensorTrain, TensorTrainFit, add, subtract
 
 
 def _random_tt(rng, dtype, linkdims, localdims):

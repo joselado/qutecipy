@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Matrix-layer (rrLU) benchmark -- Python counterpart of bench_matrix.jl.
-Run from the repo root with `python3 examples/bench_matrix.py` (needs qtcipy on
+Run from the repo root with `python3 examples/bench_matrix.py` (needs qutecipy on
 PYTHONPATH, e.g. `PYTHONPATH=. python3 examples/bench_matrix.py`).
 """
 import time
 
 import numpy as np
 
-from qtcipy.matrix.rrlu import HAVE_NUMBA, rrlu
+from qutecipy.matrix.rrlu import HAVE_NUMBA, rrlu
 
 
 def bench(name, f, nrep=7):
@@ -21,7 +21,7 @@ def bench(name, f, nrep=7):
     print(f"{name}: {min(times) * 1000:.3f} ms CPU (min of {nrep})")
 
 
-print(f"numba acceleration: {'ON' if HAVE_NUMBA else 'OFF (pip install qtcipy[fast])'}")
+print(f"numba acceleration: {'ON' if HAVE_NUMBA else 'OFF (pip install qutecipy[fast])'}")
 
 rng = np.random.default_rng(42)
 A200 = rng.random((200, 200))

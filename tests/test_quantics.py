@@ -3,7 +3,7 @@ import itertools
 import numpy as np
 import pytest
 
-from qtcipy.quantics import DiscretizedGrid, InherentDiscreteGrid, quantics_function
+from qutecipy.quantics import DiscretizedGrid, InherentDiscreteGrid, quantics_function
 
 
 def test_1d_roundtrip_base2():

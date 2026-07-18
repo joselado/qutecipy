@@ -10,13 +10,13 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from qtcipy.globalpivot import DefaultGlobalPivotFinder, GlobalPivotSearchInput, _floatingzone
-from qtcipy.matrix.luci import MatrixLUCI
-from qtcipy.tensortrain.base import AbstractTensorTrain
-from qtcipy.tensortrain.batcheval import batchevaluate_dispatch, isbatchevaluable
-from qtcipy.tensortrain.cache import TTCache
-from qtcipy.tensortrain.core import TensorTrain
-from qtcipy.util import forwardsweep, maxabs, pushunique
+from qutecipy.globalpivot import DefaultGlobalPivotFinder, GlobalPivotSearchInput, _floatingzone
+from qutecipy.matrix.luci import MatrixLUCI
+from qutecipy.tensortrain.base import AbstractTensorTrain
+from qutecipy.tensortrain.batcheval import batchevaluate_dispatch, isbatchevaluable
+from qutecipy.tensortrain.cache import TTCache
+from qutecipy.tensortrain.core import TensorTrain
+from qutecipy.util import forwardsweep, maxabs, pushunique
 
 _UNBOUNDED_RANK = 2**62
 
@@ -550,7 +550,7 @@ def crossinterpolate2(
     and the global pivot finder frequently re-visit the same points --
     measured 5-15x redundant calls on typical problems), wrap it first:
 
-        from qtcipy.tensortrain.cachedfunction import CachedFunction
+        from qutecipy.tensortrain.cachedfunction import CachedFunction
         f_cached = CachedFunction(dtype, f, localdims)
         tci, ranks, errors = crossinterpolate2(dtype, f_cached, localdims, ...)
 

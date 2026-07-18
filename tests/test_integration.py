@@ -1,6 +1,6 @@
 import numpy as np
 
-from qtcipy.integration import integrate
+from qutecipy.integration import integrate
 
 rng = np.random.default_rng(1234)
 

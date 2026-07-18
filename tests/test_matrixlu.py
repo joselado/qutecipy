@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from qtcipy.matrix.rrlu import arrlu, rrlu, rrlu_inplace, submatrixargmax
+from qutecipy.matrix.rrlu import arrlu, rrlu, rrlu_inplace, submatrixargmax
 
 rng = np.random.default_rng(1234)
 

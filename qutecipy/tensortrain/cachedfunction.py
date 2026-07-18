@@ -17,7 +17,7 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from qtcipy.tensortrain.batcheval import BatchEvaluator, isbatchevaluable
+from qutecipy.tensortrain.batcheval import BatchEvaluator, isbatchevaluable
 
 
 class CachedFunction(BatchEvaluator):

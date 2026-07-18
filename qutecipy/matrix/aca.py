@@ -8,7 +8,7 @@ from __future__ import annotations
 import numpy as np
 import scipy.linalg
 
-from qtcipy.matrix.base import AbstractMatrixCI
+from qutecipy.matrix.base import AbstractMatrixCI
 
 
 def a_times_binv(a: np.ndarray, b: np.ndarray) -> np.ndarray:

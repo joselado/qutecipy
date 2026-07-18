@@ -1,4 +1,4 @@
-from qtcipy.indexset import IndexSet, isnested
+from qutecipy.indexset import IndexSet, isnested
 
 
 def test_indexset_basic():

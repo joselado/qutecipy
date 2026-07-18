@@ -1,6 +1,6 @@
 import numpy as np
 
-from qtcipy.gausskronrod import kronrod
+from qutecipy.gausskronrod import kronrod
 
 # QuadGK.jl's own hardcoded double-precision n=7 rule (src/gausskronrod.jl xd7/wd7/wgd7),
 # the half-array (x <= 0) form, computed once in 100-bit arithmetic.

@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from qtcipy.matrix.aca import MatrixCI, a_inv_times_b, a_times_binv, crossinterpolate_matrix
+from qutecipy.matrix.aca import MatrixCI, a_inv_times_b, a_times_binv, crossinterpolate_matrix
 
 rng = np.random.default_rng(42)
 

@@ -94,7 +94,7 @@ class AbstractTensorTrain(ABC):
 
 
 def _sum(tt: AbstractTensorTrain, dims: tuple[int, ...]):
-    from qtcipy.tensortrain.core import TensorTrain
+    from qutecipy.tensortrain.core import TensorTrain
 
     sts = tt.sitetensors()
     dtype = sts[0].dtype

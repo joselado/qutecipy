@@ -13,8 +13,8 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from qtcipy.gausskronrod import kronrod
-from qtcipy.tci2 import crossinterpolate2
+from qutecipy.gausskronrod import kronrod
+from qutecipy.tci2 import crossinterpolate2
 
 
 def integrate(

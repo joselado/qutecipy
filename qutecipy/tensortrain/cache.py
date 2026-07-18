@@ -13,8 +13,8 @@ from typing import Sequence
 
 import numpy as np
 
-from qtcipy.tensortrain.base import AbstractTensorTrain
-from qtcipy.tensortrain.batcheval import BatchEvaluator
+from qutecipy.tensortrain.base import AbstractTensorTrain
+from qutecipy.tensortrain.batcheval import BatchEvaluator
 
 
 class TTCache(AbstractTensorTrain, BatchEvaluator):

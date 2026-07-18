@@ -1,7 +1,7 @@
 # Julia vs. Python comparison examples
 
 Runnable scripts that exercise the Julia reference (`reference/TensorCrossInterpolation.jl`)
-and the Python port (`qtcipy`) on the *same* problems, for both correctness
+and the Python port (`qutecipy`) on the *same* problems, for both correctness
 cross-checking and performance comparison.
 
 ## Quick start
@@ -57,7 +57,7 @@ If Julia isn't on `PATH`, `compare.py` still runs the Python side and says so.
   Python-slower-than-Julia for `crossinterpolate2`, and near parity (~1.0x) for the raw
   `rrLU` matrix layer alone (numba-accelerated). See `CLAUDE.md`'s "Performance" section
   for the profiling story behind these numbers and what's been done about them
-  (`qtcipy[fast]` numba acceleration, `CachedFunction` for expensive/redundant `f`).
+  (`qutecipy[fast]` numba acceleration, `CachedFunction` for expensive/redundant `f`).
 
 ## Using `CachedFunction` for a bigger win
 
@@ -66,8 +66,8 @@ The single biggest lever for an expensive or redundantly-evaluated `f` is
 sweep -- measured 5-15x redundant calls on these example problems). Try it:
 
 ```python
-from qtcipy.tensortrain.cachedfunction import CachedFunction
-from qtcipy.tci2 import crossinterpolate2
+from qutecipy.tensortrain.cachedfunction import CachedFunction
+from qutecipy.tci2 import crossinterpolate2
 
 f_cached = CachedFunction(np.float64, f, localdims)
 tci, ranks, errors = crossinterpolate2(np.float64, f_cached, localdims, tolerance=1e-8)

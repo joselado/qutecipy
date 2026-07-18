@@ -1,6 +1,6 @@
 import numpy as np
 
-from qtcipy.matrix.aca import MatrixACA
+from qutecipy.matrix.aca import MatrixACA
 
 
 def test_3x3_real():

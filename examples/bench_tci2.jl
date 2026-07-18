@@ -4,7 +4,7 @@
 #
 # Domain note: f uses v (1-based Julia indices, values 1..10) directly, so this is the
 # *same* function over the *same* domain as bench_tci2.py, which uses (index+1) to
-# compensate for qtcipy's 0-based indexing -- results (rank, sum) should match to near
+# compensate for qutecipy's 0-based indexing -- results (rank, sum) should match to near
 # machine precision.
 import TensorCrossInterpolation as TCI
 

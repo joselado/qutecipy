@@ -2,8 +2,8 @@ import itertools
 
 import numpy as np
 
-from qtcipy.tensortrain.batcheval import BatchEvaluator, batchevaluate_dispatch, isbatchevaluable
-from qtcipy.tensortrain.cachedfunction import CachedFunction
+from qutecipy.tensortrain.batcheval import BatchEvaluator, batchevaluate_dispatch, isbatchevaluable
+from qutecipy.tensortrain.cachedfunction import CachedFunction
 
 
 def test_cache():

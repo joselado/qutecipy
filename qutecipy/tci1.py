@@ -16,10 +16,10 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from qtcipy.indexset import IndexSet
-from qtcipy.matrix.aca import MatrixACA, MatrixCI, a_times_binv
-from qtcipy.tensortrain.base import AbstractTensorTrain
-from qtcipy.util import maxabs, forwardsweep
+from qutecipy.indexset import IndexSet
+from qutecipy.matrix.aca import MatrixACA, MatrixCI, a_times_binv
+from qutecipy.tensortrain.base import AbstractTensorTrain
+from qutecipy.util import maxabs, forwardsweep
 
 
 class TensorCI1(AbstractTensorTrain):
@@ -343,7 +343,7 @@ def crossinterpolate1(
     normalizeerror: bool = True,
 ) -> tuple[TensorCI1, list[int], list[float]]:
     """Cross interpolate f using the TCI1 algorithm. No caching takes place
-    by default; wrap f in qtcipy.tensortrain.cachedfunction.CachedFunction
+    by default; wrap f in qutecipy.tensortrain.cachedfunction.CachedFunction
     first if it's expensive to evaluate (see crossinterpolate2's docstring)."""
     if firstpivot is None:
         firstpivot = [0] * len(localdims)

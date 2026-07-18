@@ -1,6 +1,6 @@
 import numpy as np
 
-from qtcipy.util import isconstant, maxabs, optfirstpivot, pushunique, randomsubset
+from qutecipy.util import isconstant, maxabs, optfirstpivot, pushunique, randomsubset
 
 
 def test_maxabs():

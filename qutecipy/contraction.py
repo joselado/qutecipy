@@ -20,10 +20,10 @@ from typing import Callable, Sequence
 
 import numpy as np
 
-from qtcipy.tensortrain.base import AbstractTensorTrain
-from qtcipy.tensortrain.batcheval import BatchEvaluator
-from qtcipy.tensortrain.core import TensorTrain, _factorize
-from qtcipy.util import optfirstpivot
+from qutecipy.tensortrain.base import AbstractTensorTrain
+from qutecipy.tensortrain.batcheval import BatchEvaluator
+from qutecipy.tensortrain.core import TensorTrain, _factorize
+from qutecipy.util import optfirstpivot
 
 _UNBOUNDED_RANK = 2**62
 
@@ -288,7 +288,7 @@ def contract_TCI(
         if A.sitetensor(i).shape[2] != B.sitetensor(i).shape[1]:
             raise ValueError("Cannot contract tensor trains with non-matching site dimensions.")
 
-    from qtcipy.tci2 import crossinterpolate2  # local import: avoids a tci2<->contraction import cycle
+    from qutecipy.tci2 import crossinterpolate2  # local import: avoids a tci2<->contraction import cycle
 
     matrixproduct = Contraction(A, B, f=f)
     localdims = [d1 * d2 for d1, d2 in matrixproduct.sitedims()]

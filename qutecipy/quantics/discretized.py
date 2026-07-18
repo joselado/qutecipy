@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Sequence
 
-from qtcipy.quantics.grid import InherentDiscreteGrid, _build_indextable, _to_tuple
+from qutecipy.quantics.grid import InherentDiscreteGrid, _build_indextable, _to_tuple
 
 
 class DiscretizedGrid:

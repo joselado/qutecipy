@@ -6,9 +6,9 @@ from typing import Sequence
 
 import numpy as np
 
-from qtcipy.matrix.luci import MatrixLUCI
-from qtcipy.matrix.rrlu import rrlu
-from qtcipy.tensortrain.base import AbstractTensorTrain
+from qutecipy.matrix.luci import MatrixLUCI
+from qutecipy.matrix.rrlu import rrlu
+from qutecipy.tensortrain.base import AbstractTensorTrain
 
 _UNBOUNDED_RANK = 2**62
 

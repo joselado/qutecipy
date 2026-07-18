@@ -1,7 +1,7 @@
 import numpy as np
 
-from qtcipy.matrix.aca import MatrixCI
-from qtcipy.matrix.luci import MatrixLUCI
+from qutecipy.matrix.aca import MatrixCI
+from qutecipy.matrix.luci import MatrixLUCI
 
 rng = np.random.default_rng(7)
 
