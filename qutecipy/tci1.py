@@ -255,7 +255,12 @@ class TensorCI1(AbstractTensorTrain):
             if error > abstol:
                 newI[b] = newI[b - 1] + (newpivot[b - 1],)
                 error = self._cross_error(f, newI[b], newJ[b - 1])
-            elif tuple(newpivot[:b - 1]) in self.Iset[b - 1].toint:
+            elif tuple(newpivot[:b]) in self.Iset[b - 1].toint:
+                # Julia's `newpivot[1:bondindex] in tci.Iset[bondindex]` compares a
+                # length-bondindex vector against length-(bondindex-1) entries, so this
+                # branch is provably unreachable there; mirror that length mismatch here
+                # (newpivot[:b] has length b, self.Iset[b - 1] entries have length b - 1)
+                # rather than diverging from the reference algorithm's actual behavior.
                 newI[b] = tuple(newpivot[:b])
                 error = self._cross_error(f, newI[b], newJ[b - 1])
             else:

@@ -185,6 +185,9 @@ def _to_tuple_local(x, d):
 
 def _build_lookup_table(Rs, indextable, variablenames) -> list[list[tuple[int, int]]]:
     D = len(Rs)
+    for d in range(D):
+        if Rs[d] < 0:
+            raise ValueError(f"Rs[{d}] = {Rs[d]}. Rs must be non-negative.")
     lookup_table = [[None] * Rs[d] for d in range(D)]
     var_index = {v: i for i, v in enumerate(variablenames)}
     visited = [[False] * Rs[d] for d in range(D)]

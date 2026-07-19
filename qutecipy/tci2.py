@@ -328,6 +328,18 @@ class TensorCI2(AbstractTensorTrain):
         self.sweep1site(f, "backward", reltol=reltol, abstol=abstol, maxbonddim=maxbonddim, updatetensors=False)
         self.sweep1site(f, "forward", reltol=reltol, abstol=abstol, maxbonddim=maxbonddim, updatetensors=True)
 
+    def _full_pivot_search(
+        self, f: Callable, Icombined: list[tuple], Jcombined: list[tuple], reltol: float, abstol: float,
+        maxbonddim: int, leftorthogonal: bool,
+    ) -> MatrixLUCI:
+        Pi = filltensor(self.dtype, f, self.localdims, Icombined, Jcombined, 0).reshape(
+            len(Icombined), len(Jcombined)
+        )
+        self.update_max_sample(Pi)
+        return MatrixLUCI.from_matrix(
+            Pi, reltol=reltol, abstol=abstol, maxrank=maxbonddim, leftorthogonal=leftorthogonal
+        )
+
     def update_pivots(
         self, b: int, f: Callable, leftorthogonal: bool, reltol: float = 1e-14, abstol: float = 0.0,
         maxbonddim: int | None = None, sweepdirection: str = "forward", pivotsearch: str = "full",
@@ -344,13 +356,7 @@ class TensorCI2(AbstractTensorTrain):
         Jcombined = _union_preserve(kronecker_right(self.localdims[b + 1], self.Jset[b + 1]), extraJset)
 
         if pivotsearch == "full":
-            Pi = filltensor(self.dtype, f, self.localdims, Icombined, Jcombined, 0).reshape(
-                len(Icombined), len(Jcombined)
-            )
-            self.update_max_sample(Pi)
-            luci = MatrixLUCI.from_matrix(
-                Pi, reltol=reltol, abstol=abstol, maxrank=maxbonddim, leftorthogonal=leftorthogonal
-            )
+            luci = self._full_pivot_search(f, Icombined, Jcombined, reltol, abstol, maxbonddim, leftorthogonal)
         elif pivotsearch == "rook":
             icombined_pos = {v: i for i, v in enumerate(Icombined)}
             jcombined_pos = {v: i for i, v in enumerate(Jcombined)}
@@ -365,13 +371,7 @@ class TensorCI2(AbstractTensorTrain):
             self.update_max_sample(np.array([Pif.maxsamplevalue], dtype=self.dtype))
 
             if luci.npivots() == 0:  # fall back to full search if rook search fails
-                Pi = filltensor(self.dtype, f, self.localdims, Icombined, Jcombined, 0).reshape(
-                    len(Icombined), len(Jcombined)
-                )
-                self.update_max_sample(Pi)
-                luci = MatrixLUCI.from_matrix(
-                    Pi, reltol=reltol, abstol=abstol, maxrank=maxbonddim, leftorthogonal=leftorthogonal
-                )
+                luci = self._full_pivot_search(f, Icombined, Jcombined, reltol, abstol, maxbonddim, leftorthogonal)
         else:
             raise ValueError(f"Unknown pivot search strategy {pivotsearch}. Choose from 'rook', 'full'.")
 

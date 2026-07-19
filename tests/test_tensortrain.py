@@ -59,23 +59,48 @@ def test_ttfit():
     # TensorTrainFit is optimizer-agnostic in the Julia original (the caller supplies
     # the optimizer, e.g. Optim.jl + Zygote there); here scipy.optimize.minimize with
     # its own finite-difference gradient plays that role (see CLAUDE.md External deps).
-    rng = np.random.default_rng(10)
+    # atol=1e-6: L-BFGS-B with a finite-difference gradient converges this toy 2-point
+    # fit to ~1e-9 (measured), well inside Julia's exact-gradient isapprox tolerance
+    # (~1.5e-8) -- 1e-6 leaves margin for platform/BLAS variation without loosening the
+    # test past what the algorithm actually achieves (unlike the previous atol=1e-4,
+    # ~4 orders of magnitude looser than necessary).
     localdims = [2, 2, 2]
     linkdims = [1, 2, 3, 1]
-    tt0 = _random_tt(rng, np.float64, linkdims, localdims)
+    options = {"ftol": 1e-15, "gtol": 1e-10}
 
-    indexsets = [[0, 0, 0], [1, 1, 1]]
-    values = rng.standard_normal(len(indexsets))
+    for dtype in [np.float64, np.complex128]:
+        rng = np.random.default_rng(10)
+        tt0 = _random_tt(rng, dtype, linkdims, localdims)
 
-    ttfit = TensorTrainFit(indexsets, values, tt0)
-    x0 = tt0.flatten()
+        indexsets = [[0, 0, 0], [1, 1, 1]]
+        values = rng.standard_normal(len(indexsets))
+        if np.issubdtype(dtype, np.complexfloating):
+            values = values + 1j * rng.standard_normal(len(indexsets))
+        values = values.astype(dtype)
 
-    res = scipy.optimize.minimize(ttfit, x0, method="L-BFGS-B")
+        ttfit = TensorTrainFit(indexsets, values, tt0)
+        x0 = tt0.flatten()
 
-    tensors = ttfit.to_tensors(res.x)
-    ttopt = TensorTrain(tensors)
-    got = [ttopt.evaluate(idx) for idx in indexsets]
-    assert np.allclose(got, values, atol=1e-4)
+        if np.issubdtype(dtype, np.complexfloating):
+            # scipy.optimize.minimize requires real-valued parameters; pack/unpack
+            # complex coefficients as concatenated (real, imag) halves.
+            n = len(x0)
+
+            def loss(x_real, n=n):
+                return ttfit(x_real[:n] + 1j * x_real[n:])
+
+            res = scipy.optimize.minimize(
+                loss, np.concatenate([x0.real, x0.imag]), method="L-BFGS-B", options=options
+            )
+            xopt = res.x[:n] + 1j * res.x[n:]
+        else:
+            res = scipy.optimize.minimize(ttfit, x0, method="L-BFGS-B", options=options)
+            xopt = res.x
+
+        tensors = ttfit.to_tensors(xopt)
+        ttopt = TensorTrain(tensors)
+        got = [ttopt.evaluate(idx) for idx in indexsets]
+        assert np.allclose(got, values, atol=1e-6)
 
 
 def test_addition_and_multiplication():

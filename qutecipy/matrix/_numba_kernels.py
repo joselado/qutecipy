@@ -14,11 +14,12 @@ cannot touch anything that calls the user's arbitrary Python ``f`` (the
 
 The kernel below is a direct, tie-break-faithful port of
 ``rrLU._optimize``/``_add_pivot``/``_swap_row``/``_swap_col``: the argmax
-scan is an explicit row-major (C-order) linear scan with strict ``>``
-comparison, which is exactly numpy's ``np.argmax`` first-occurrence-of-the-
-max semantics -- required so the numba path picks bit-for-bit the same
-pivots as the Python path (verified by the full test suite passing
-identically with numba installed vs. not).
+scan is an explicit column-major linear scan (columns outer, rows inner) with
+strict ``>`` comparison, matching Julia's own ``submatrixargmax`` loop order
+(and, correspondingly, ``qutecipy.matrix.rrlu.submatrixargmax``'s transposed
+``np.argmax`` call) -- required so the numba path picks bit-for-bit the same
+pivots as the Python path on exact ties (verified by the full test suite
+passing identically with numba installed vs. not).
 """
 from __future__ import annotations
 
@@ -31,21 +32,25 @@ except ImportError:
 
 if HAVE_NUMBA:
     @njit(cache=True)
-    def _rrlu_pivot_kernel(A, rowperm, colperm, npivot, maxrank, reltol, abstol, leftorthogonal):
+    def _rrlu_pivot_kernel(A, rowperm, colperm, npivot, maxrank, reltol, abstol, leftorthogonal, error):
+        # `error` is passed in (rather than reset to 0.0 here) so that, when the while
+        # loop body never runs (e.g. maxrank <= npivot on entry), this kernel leaves it
+        # unchanged -- matching both the pure-Python fallback (which only ever assigns
+        # self.error inside the loop body) and the Julia reference (same: lu.error keeps
+        # whatever value it had before _optimizerrlu! if the loop doesn't execute).
         maxerror = 0.0
-        error = 0.0
         nrows, ncols = A.shape
 
         while npivot < maxrank:
             k = npivot
 
-            # argmax(|A[k:, k:]|), first-occurrence-in-row-major-order tie-break
-            # (matches np.argmax on a C-order array exactly).
+            # argmax(|A[k:, k:]|), first-occurrence-in-column-major-order tie-break
+            # (columns outer, rows inner -- matches Julia's submatrixargmax).
             best_val = -1.0
             best_i = k
             best_j = k
-            for i in range(k, nrows):
-                for j in range(k, ncols):
+            for j in range(k, ncols):
+                for i in range(k, nrows):
                     v = abs(A[i, j])
                     if v > best_val:
                         best_val = v

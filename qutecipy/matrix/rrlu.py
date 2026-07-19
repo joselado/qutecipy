@@ -20,11 +20,17 @@ _NUMBA_DTYPES = (np.dtype(np.float64), np.dtype(np.complex128))
 
 def submatrixargmax(A: np.ndarray, startindex: int, f: Callable = np.abs):
     """Location of the max of f(A) within the trailing submatrix A[startindex:, startindex:],
-    in original (unshifted) coordinates."""
+    in original (unshifted) coordinates.
+
+    Julia's submatrixargmax scans columns-outer/rows-inner, so on an exact tie it
+    favors the smallest column index. np.argmax on a plain (row-major) array would
+    instead favor the smallest row index -- transpose first so np.argmax's
+    first-occurrence tie-break follows the same column-outer/row-inner order.
+    """
     sub = A[startindex:, startindex:]
     vals = f(sub)
-    idx = np.unravel_index(np.argmax(vals), vals.shape)
-    return startindex + idx[0], startindex + idx[1]
+    idx = np.unravel_index(np.argmax(vals.T), vals.T.shape)
+    return startindex + idx[1], startindex + idx[0]
 
 
 class rrLU:
@@ -36,6 +42,15 @@ class rrLU:
         self.leftorthogonal = bool(leftorthogonal)
         self.npivot = int(npivot)
         self.error = float(error)
+
+        if self.npivot != self.L.shape[1]:
+            raise ValueError("L must have the same number of columns as the number of pivots.")
+        if self.npivot != self.U.shape[0]:
+            raise ValueError("U must have the same number of rows as the number of pivots.")
+        if len(self.rowpermutation) != self.L.shape[0]:
+            raise ValueError("rowpermutation must have length equal to the number of rows of L.")
+        if len(self.colpermutation) != self.U.shape[1]:
+            raise ValueError("colpermutation must have length equal to the number of columns of U.")
 
     @classmethod
     def empty(cls, dtype, nrows: int, ncols: int, leftorthogonal: bool = True) -> "rrLU":
@@ -85,7 +100,7 @@ class rrLU:
         if HAVE_NUMBA and A.dtype in _NUMBA_DTYPES and A.flags["C_CONTIGUOUS"]:
             self.npivot, self.error, _ = _rrlu_pivot_kernel(
                 A, self.rowpermutation, self.colpermutation, self.npivot, maxrank, reltol, abstol,
-                self.leftorthogonal,
+                self.leftorthogonal, self.error,
             )
         else:
             maxerror = 0.0
