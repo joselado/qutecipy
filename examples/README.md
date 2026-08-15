@@ -39,6 +39,15 @@ If Julia isn't on `PATH`, `compare.py` still runs the Python side and says so.
   `x+1` inside `f` to match Julia's 1-based `v` directly) so the two `sum` values are
   a genuine correctness check, not just "both ran without crashing."
 - `compare.py` -- orchestrates both languages and prints the comparison table.
+- `arrayvalued_demo.py` -- Python-only (this feature has no Julia counterpart):
+  array-valued TCI, i.e. `f(x) -> ndarray` interpolated with pivots shared across all
+  components, plus extraction of one tensor train per component. Runs two function
+  families to show the cost model -- components that share structure (joint rank stays
+  near `max_k chi_k`) and components that don't (joint rank goes to `sum_k chi_k`) --
+  and in both cases calls `f` roughly an order of magnitude fewer times than `K`
+  independent `crossinterpolate2` runs (9-17x in these runs; the exact figure moves
+  run to run, since the pivot search is randomized). Run it with
+  `PYTHONPATH=. python3 examples/arrayvalued_demo.py`.
 
 ## Interpreting the output
 

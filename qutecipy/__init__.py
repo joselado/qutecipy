@@ -4,6 +4,8 @@ Public API mirrors the Julia package's exports (crossinterpolate1,
 crossinterpolate2, TensorTrain, ...), adapted to 0-based indexing -- see
 CLAUDE.md for the full porting plan and design decisions.
 """
+from qutecipy.arrayvalued import (ArrayTensorTrain, ArrayValuedFunction,
+                                 crossinterpolate2_array)
 from qutecipy.contraction import Contraction, contract
 from qutecipy.conversion import tci1_from_tci2, tci2_from_tci1
 from qutecipy.gausskronrod import kronrod
@@ -36,4 +38,7 @@ __all__ = [
     "integrate",
     "Contraction",
     "contract",
+    "ArrayValuedFunction",
+    "ArrayTensorTrain",
+    "crossinterpolate2_array",
 ]

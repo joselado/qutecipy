@@ -82,6 +82,61 @@ either checks a closed-form/analytic result, or was validated once against a liv
 Julia run during development and then re-expressed as a self-contained Python
 assertion (Julia is not a runtime dependency of the test suite).
 
+## Extensions beyond the Julia reference
+
+Everything above is a faithful port of a specific `.jl` file. The following has **no
+upstream counterpart** — it is additive, lives in its own module, and modifies none of
+the ported code.
+
+### `qutecipy/arrayvalued.py` — array-valued (vector-/matrix-valued) TCI
+
+Interpolates `f(x) -> np.ndarray` of a fixed shape `S`, with all components sharing one
+set of pivots. Public API: `crossinterpolate2_array`, `ArrayValuedFunction`,
+`ArrayTensorTrain`; tests in `tests/test_arrayvalued.py`.
+
+**Design: the component index becomes an extra edge site.** The scalar joint function
+`F(x_0..x_{N-1}, k) = f(x).reshape(-1)[k]` is cross-interpolated on the extended chain
+`localdims + [K]` (`K = prod(S)`) by the *unmodified* `crossinterpolate2`. Because the
+extra site sits at one end, all interior `Iset`/`Jset` are shared across components by
+construction, and one TT per component is recovered *exactly* by slicing the edge core
+at `k` and absorbing it into its neighbour (`ArrayTensorTrain.component`) — site tensors
+`0..N-2` are then bitwise identical across components. `componentposition="first"` puts
+the extra site at the other end instead.
+
+**Why not the obvious shortcut.** Pivoting on a scalar surrogate `g(x) = max_k |f_k(x)|`
+(or a random projection) and then rebuilding one TT per component from the shared
+`Iset`/`Jset` was rejected: nothing then keeps each component's own pivot matrix
+`P_k = f_k(Iset[b+1], Jset[b])` well conditioned, and `compute_sitetensor` inverts it
+(`np.linalg.solve`, tci2.py) — a component that is flat or near-zero on the shared
+pivots is destroyed *silently*, since the reported error only ever measured the
+surrogate. Block/vector ACA (shared pivot from an aggregated residual, per-component
+rank-1 deflation) has the same weakness — the deflation divides by that component's own
+pivot value — plus it would fork `rrLU._add_pivot`/`_optimize`, the numba kernel,
+`cols2Lmatrix`/`rows2Umatrix`, `MatrixLUCI` and the whole rook path. With the extra-site
+formulation every inverted matrix is a submatrix of the *joint* tensor chosen by rrLU's
+own pivoting, and the controlled error is the true joint residual including the
+component axis. Cost: `max_k chi_k <= chi_joint <= sum_k chi_k`, so the "components
+share structure" assumption is exactly the statement that this is near-free; if it
+fails, bonds get fatter rather than the result getting silently wrong.
+
+**Evaluation cost.** `ArrayValuedFunction` caches the whole array per `x`, so the `K`
+scalar `(x, k)` queries TCI2 makes at one `x` cost a single call to the user's `f`.
+`CachedFunction` is *not* a substitute — it keys on the full index including `k`.
+
+**Error-normalization caveat (real, tested).** With `normalizeerror=True`, `tolerance`
+is relative to the largest sampled value across *all* components, so a much smaller
+component is simply dropped: for `f = [exp(-2x), 1e-8*(cos(5x)+1.5)]` at `tolerance=1e-6`
+the joint TT collapses to bond dimension 1 and the second component comes out ~80%
+wrong. Passing `componentweights=[1.0, 1e-8]` (interpolate `f_k/w_k`, multiply `w_k`
+back on output) brings both components to ~1e-15 relative error. Documented in the
+module docstring and covered by `test_componentweights_fix_relative_error_of_small_components`.
+
+**Prior art.** arXiv:2407.02454 (the xfac/TCI review) has no vector-/matrix-valued TCI —
+its "block rook search" is a scalar pivot-*search* variant, unrelated. Carrying a
+discrete component/orbital index as an extra TT leg is standard tensor-train practice;
+block/vector ACA (the rejected option above) is the hierarchical-matrix literature's
+approach.
+
 ## Performance
 
 Benchmarked against the live Julia reference (same machine, JIT-warmed Julia, CPU-time
@@ -360,6 +415,7 @@ qutecipy/
   gausskronrod.py         # QuadGK.jl's src/gausskronrod.jl (unit-weight/hollow-tridiagonal subset only)
   integration.py          # integration.jl (Gauss-Kronrod quadrature via TCI)
   contraction.py          # contraction.jl (MPO x MPO contract, 3 algorithms)
+  arrayvalued.py          # EXTENSION, no Julia counterpart -- array-valued TCI
   quantics/
     grid.py                # QuanticsGrids.jl's grid.jl -> InherentDiscreteGrid
     discretized.py          # QuanticsGrids.jl's grid_discretized.jl -> DiscretizedGrid
