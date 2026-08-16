@@ -123,13 +123,59 @@ fails, bonds get fatter rather than the result getting silently wrong.
 scalar `(x, k)` queries TCI2 makes at one `x` cost a single call to the user's `f`.
 `CachedFunction` is *not* a substitute — it keys on the full index including `k`.
 
-**Error-normalization caveat (real, tested).** With `normalizeerror=True`, `tolerance`
-is relative to the largest sampled value across *all* components, so a much smaller
-component is simply dropped: for `f = [exp(-2x), 1e-8*(cos(5x)+1.5)]` at `tolerance=1e-6`
-the joint TT collapses to bond dimension 1 and the second component comes out ~80%
-wrong. Passing `componentweights=[1.0, 1e-8]` (interpolate `f_k/w_k`, multiply `w_k`
-back on output) brings both components to ~1e-15 relative error. Documented in the
-module docstring and covered by `test_componentweights_fix_relative_error_of_small_components`.
+It is also a `BatchEvaluator`. That matters more here than anywhere else in the library:
+because the component leg is an ordinary site, any batch spanning it contains `K` cells
+per distinct `x`, and the *user's* `f` is amortized so well (measured 61 scalar queries
+per `f` call on an R=12, K=8 case) that the adapter's own per-cell cost, not `f`,
+dominates the run. `batchevaluate` strips the component coordinate out of whichever of
+the (left, centre, right) blocks holds it, calls `values` once per distinct `x` — a
+factor `K` fewer Python-level steps — and assembles the batch with one numpy gather.
+Cell-for-cell **bit-identical** to the generic per-cell path, and `f` is called exactly
+as often either way; only the bookkeeping changes. Measured speedup on the whole
+`crossinterpolate2_array` run (interleaved, min of 5, same protocol as the performance
+section): **1.8× at K=8, 2.2× at K=16, 2.8× at K=32** — the gain grows with `K`, as the
+mechanism implies. `tests/test_arrayvalued.py::test_batchevaluate_matches_generic_path_exactly`
+asserts `np.array_equal` (not `allclose`) against the generic path over *every*
+`(nleft, ncentre, nright)` split of the extended chain, which is what puts the component
+slot in each of the three blocks in turn — the only three cases the index bookkeeping
+has to tell apart.
+
+**Error normalization — `componentweights="auto"` is the default.** With
+`normalizeerror=True`, `tolerance` is relative to the largest sampled value across *all*
+components, so unweighted, a much smaller component is simply dropped — and dropped
+*silently*, since the reported error is dominated by the big one. For
+`f = [exp(-2x), 1e-8*(cos(5x)+1.5)]` at `tolerance=1e-6` the joint TT collapses to bond
+dimension 1 and the second component comes out ~80% wrong.
+
+`crossinterpolate2_array` therefore defaults to `componentweights="auto"`:
+`estimate_componentweights` samples `f` at `nsampleweights` (default 50) points, takes
+`w_k = max_x |f_k(x)|`, and the interpolation runs on `f_k/w_k` with the weights
+multiplied back on output, so `tolerance` means the same thing for every component.
+Sampling goes through `ArrayValuedFunction.values`, so those calls land in the same
+cache TCI2 then reads — they are not extra evaluations in the end, only the ones TCI2
+would not have made anyway.
+
+Measured on a 3-component `f` whose middle component is 1e-8 times the others
+(R=10, `tolerance=1e-6`), per-component relative error and cost:
+
+| | component 0 | component 1 (tiny) | component 2 | rank | `f` calls |
+|---|---|---|---|---|---|
+| `componentweights=None` | 1.4e-15 | **9.2e-01** | 8.1e-07 | 4 | 276 |
+| `"auto"` (default) | 1.7e-15 | 4.5e-07 | 8.9e-08 | 6 | 361 |
+
+That is the honest trade and the reason `None` is kept as an option: resolving a
+component you were previously discarding costs bond dimension. When the small
+components genuinely do not matter, `None` is cheaper; when they do, the old default was
+silently wrong.
+
+Two guards in the estimator, both about not amplifying a misleadingly small sampled
+scale: a component that is *exactly* zero on every sampled point gets the global max
+(keeping the unweighted behaviour for it rather than blowing up whatever appears later),
+and every other component is floored at `floor * max_k w_k` (default `floor=1e-14`),
+bounding amplification at `1/floor`. It remains a finite-sample heuristic — if the
+sample misses where a component peaks, that component is over-weighted, which is
+harmless (it just gets sampled above 1). Pass explicit weights when the scales are known
+analytically.
 
 **Prior art.** arXiv:2407.02454 (the xfac/TCI review) has no vector-/matrix-valued TCI —
 its "block rook search" is a scalar pivot-*search* variant, unrelated. Carrying a

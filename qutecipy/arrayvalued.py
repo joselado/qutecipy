@@ -61,22 +61,38 @@ come from *one* call to the user's ``f``. If the components do not share
 structure, this degrades gracefully (fatter bonds, still accurate) rather than
 silently losing accuracy.
 
-Error normalization caveat
---------------------------
-With ``normalizeerror=True`` (the default), ``tolerance`` is relative to the
-single largest sampled value across *all* components, so a component whose
-scale is orders of magnitude smaller gets a correspondingly worse relative
-error. Pass ``componentweights`` to fix that: the interpolation runs on
-``f_k / w_k`` and the weights are multiplied back on the way out.
+Error normalization, and why weights are on by default
+------------------------------------------------------
+With ``normalizeerror=True`` (TCI2's default), ``tolerance`` is relative to the
+single largest sampled value across *all* components. Unweighted, a component
+orders of magnitude smaller than the largest is therefore simply dropped -- and
+dropped *silently*, since the reported error is dominated by the big component.
+For ``f = [exp(-2x), 1e-8*(cos(5x)+1.5)]`` at ``tolerance=1e-6`` the joint TT
+collapses to bond dimension 1 and the second component comes out ~80% wrong.
+
+So ``crossinterpolate2_array`` defaults to ``componentweights="auto"``: it
+samples ``f`` at a few dozen points up front, takes ``w_k = max_x |f_k(x)|``,
+interpolates ``f_k / w_k``, and multiplies the weights back on the way out.
+``tolerance`` then means the same thing for every component. The sampling is
+cached in the same adapter TCI2 uses, so those calls are not extra work.
+
+Pass ``componentweights=None`` for the old unweighted behaviour, or an explicit
+array when the scales are known analytically. Weighting is not free: forcing a
+genuinely negligible component to full *relative* accuracy costs bond dimension,
+so ``None`` is the right choice when the small components genuinely do not
+matter.
 """
 from __future__ import annotations
 
+import itertools
+import random as _random
 from typing import Callable, Sequence
 
 import numpy as np
 
 from qutecipy.tci2 import crossinterpolate2
 from qutecipy.tensortrain.base import AbstractTensorTrain
+from qutecipy.tensortrain.batcheval import BatchEvaluator
 from qutecipy.tensortrain.core import TensorTrain
 
 _POSITIONS = ("last", "first")
@@ -99,7 +115,7 @@ def _check_position(componentposition: str) -> str:
     return componentposition
 
 
-class ArrayValuedFunction:
+class ArrayValuedFunction(BatchEvaluator):
     """Adapter turning an array-valued ``f(x) -> ndarray of shape S`` into the
     scalar function of an extended index set that scalar TCI2 consumes.
 
@@ -138,23 +154,35 @@ class ArrayValuedFunction:
         else:
             self.extendedlocaldims = [self.K] + self.localdims
 
-        if componentweights is None:
-            self.componentweights = None
-            self._invweights = None
-        else:
-            w = np.asarray(componentweights).reshape(-1)
-            if w.size != self.K:
-                raise ValueError(f"componentweights must have {self.K} entries, got {w.size}.")
-            if np.any(w == 0):
-                raise ValueError("componentweights must all be nonzero.")
-            self.componentweights = w
-            self._invweights = 1.0 / w
-
         # cache[x] = f(x), flattened, *unweighted* (weights are applied per call,
-        # a single scalar multiply, so that the cache holds the raw user values).
+        # a single scalar multiply, so that the cache holds the raw user values --
+        # which is also what lets set_componentweights work after sampling).
         self.cache: dict[tuple, np.ndarray] = {}
         self.ncalls = 0     # calls to the user's f (== number of distinct x seen)
         self.nqueries = 0   # scalar (x, k) queries made by TCI2
+
+        self.set_componentweights(componentweights)
+
+    def set_componentweights(self, componentweights) -> None:
+        """Install (or clear, with ``None``) the per-component weights.
+
+        Safe to call after values have been cached: the cache holds *unweighted*
+        user values and the weights are applied per query. This is what lets
+        :func:`estimate_componentweights` sample through this same adapter -- so
+        the sampling calls are not wasted, they are exactly the cache entries TCI2
+        would otherwise pay for later.
+        """
+        if componentweights is None:
+            self.componentweights = None
+            self._invweights = None
+            return
+        w = np.asarray(componentweights).reshape(-1)
+        if w.size != self.K:
+            raise ValueError(f"componentweights must have {self.K} entries, got {w.size}.")
+        if np.any(w == 0):
+            raise ValueError("componentweights must all be nonzero.")
+        self.componentweights = w
+        self._invweights = 1.0 / w
 
     def values(self, x: Sequence[int]) -> np.ndarray:
         """All components at ``x``, flattened. One call to ``f`` per distinct ``x``."""
@@ -183,6 +211,82 @@ class ArrayValuedFunction:
         v = self.values(x)[k]
         return v if self._invweights is None else v * self._invweights[k]
 
+    # -- batch evaluation --------------------------------------------------
+
+    def _component_slot(self, nl: int, ncent: int) -> tuple[str, int]:
+        """Which of the (left, center, right) blocks carries the component index,
+        and at which offset inside that block."""
+        pos = 0 if self.componentposition == "first" else self.nsites
+        if pos < nl:
+            return "left", pos
+        if pos < nl + ncent:
+            return "center", pos - nl
+        return "right", pos - nl - ncent
+
+    def batchevaluate(self, leftindexset: Sequence, rightindexset: Sequence, ncent: int) -> np.ndarray:
+        """Evaluate a whole (left x center x right) batch of *extended* indices at once.
+
+        This is what makes the extra-site formulation cheap. TCI2 asks for the same
+        ``x`` once per component (the component leg is an ordinary site, so a batch
+        that spans it contains ``K`` cells per distinct ``x``), and going through
+        :meth:`__call__` costs three Python calls per cell. Here the component slot
+        is stripped out of whichever block holds it, ``values`` is called once per
+        distinct ``x`` -- a factor ``K`` fewer Python-level steps -- and the batch is
+        assembled with a single numpy gather.
+
+        Values are identical to the generic per-cell path, cell for cell; only the
+        bookkeeping around ``f`` changes. ``f`` itself is called exactly as often
+        either way (``values`` memoizes per ``x``).
+        """
+        nA, nC = len(leftindexset), len(rightindexset)
+        if nA * nC == 0:
+            return np.empty((0,) * (ncent + 2), dtype=self.dtype)
+
+        nl = len(leftindexset[0])
+        centerdims = self.extendedlocaldims[nl:nl + ncent]
+        centers = list(itertools.product(*[range(d) for d in centerdims])) if ncent > 0 else [()]
+        blocks = [[tuple(t) for t in leftindexset], centers, [tuple(t) for t in rightindexset]]
+
+        which, offset = self._component_slot(nl, ncent)
+        b = {"left": 0, "center": 1, "right": 2}[which]
+
+        # Strip the component coordinate out of its block: `kvals` is that block's
+        # component index per element, `reduced` the same block with the slot removed.
+        # Distinct reduced entries are what actually index the user's f.
+        kvals = np.fromiter((t[offset] for t in blocks[b]), dtype=np.intp, count=len(blocks[b]))
+        uniq: dict[tuple, int] = {}
+        rid = np.empty(len(blocks[b]), dtype=np.intp)
+        for pos_, t in enumerate(blocks[b]):
+            red = t[:offset] + t[offset + 1:]
+            got = uniq.get(red)
+            if got is None:
+                got = uniq[red] = len(uniq)
+            rid[pos_] = got
+        blocks[b] = list(uniq)
+
+        nAp, nBp, nCp = (len(x) for x in blocks)
+        # One row of V per distinct x in this batch, laid out in C order over the
+        # three (post-reduction) blocks so the row index is pure arithmetic below.
+        V = np.empty((nAp * nBp * nCp, self.K), dtype=self.dtype)
+        row = 0
+        for ta in blocks[0]:
+            for tb in blocks[1]:
+                tab = ta + tb
+                for tc in blocks[2]:
+                    V[row] = self.values(tab + tc)
+                    row += 1
+
+        eff = [np.arange(len(blk), dtype=np.intp) for blk in (leftindexset, centers, rightindexset)]
+        eff[b] = rid
+        rowidx = (eff[0][:, None, None] * nBp + eff[1][None, :, None]) * nCp + eff[2][None, None, :]
+        kidx = kvals.reshape([(-1 if i == b else 1) for i in range(3)])
+
+        result = V[rowidx, kidx]
+        if self._invweights is not None:
+            result = result * self._invweights[kidx]
+        self.nqueries += result.size
+        return result.astype(self.dtype, copy=False).reshape((nA, *centerdims, nC))
+
     def extend_pivot(self, x: Sequence[int]) -> list[tuple[int, ...]]:
         """One extended pivot per component, all sitting at the same ``x``."""
         x = tuple(int(i) for i in x)
@@ -195,6 +299,78 @@ class ArrayValuedFunction:
     def clear(self) -> None:
         """Drop the cached function values (they grow as ndistinct_x * K)."""
         self.cache.clear()
+
+
+def estimate_componentweights(
+    fa: "ArrayValuedFunction",
+    nsample: int = 50,
+    xsamples: Sequence[Sequence[int]] | None = None,
+    floor: float = 1e-14,
+    rng=None,
+) -> np.ndarray:
+    """Estimate a per-component scale for ``fa``, for use as ``componentweights``.
+
+    Samples ``f`` at ``xsamples`` plus randomly drawn ``x`` until ``nsample``
+    distinct points have been seen, and returns ``w_k = max_x |f_k(x)|`` over that
+    sample. Interpolating ``f_k / w_k`` then puts every component on a scale of
+    order 1, which is what makes a relative ``tolerance`` mean the same thing for
+    all of them (see the "Error normalization caveat" in the module docstring).
+
+    The sampling goes through ``fa.values``, so every call is cached: these are not
+    throwaway evaluations, they are cache entries TCI2 would otherwise pay for.
+
+    Two guards on the returned weights, both about not amplifying a component whose
+    sampled scale is misleadingly small:
+
+    - a component that is *exactly* zero on every sampled point gets the global max
+      instead of a near-zero weight, i.e. it keeps the unweighted behaviour rather
+      than having whatever appears later blown up;
+    - any other component is floored at ``floor * max_k w_k``, bounding the
+      amplification at ``1 / floor``.
+
+    This is a heuristic over a finite sample: if it misses the region where a
+    component is largest, that component ends up over-weighted (harmless -- it just
+    gets sampled at values above 1). Pass explicit ``componentweights`` when the
+    scales are known analytically.
+    """
+    rng = rng if rng is not None else _random
+    xs: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+    for x in xsamples or []:
+        key = tuple(int(i) for i in x)
+        if len(key) != fa.nsites:
+            raise ValueError(f"Sample point {key} has length {len(key)}, expected {fa.nsites}.")
+        if key not in seen:
+            seen.add(key)
+            xs.append(key)
+
+    total = 1
+    for d in fa.localdims:
+        total *= d
+    want = min(max(int(nsample), 0), total)
+    # Bounded rejection sampling: `want <= total` guarantees the target is reachable,
+    # the guard just keeps a pathologically unlucky draw sequence from spinning.
+    attempts = 0
+    while len(xs) < want and attempts < 20 * want + 100:
+        attempts += 1
+        key = tuple(rng.randrange(d) for d in fa.localdims)
+        if key not in seen:
+            seen.add(key)
+            xs.append(key)
+
+    if not xs:
+        raise ValueError("No sample points to estimate componentweights from.")
+
+    scale = np.zeros(fa.K, dtype=float)
+    for key in xs:
+        np.maximum(scale, np.abs(fa.values(key)), out=scale)
+
+    smax = float(scale.max())
+    if smax == 0.0:
+        raise ValueError(
+            "Every component is zero at all sampled points; cannot derive componentweights."
+        )
+    return np.where(scale > 0.0, np.maximum(scale, floor * smax), smax)
 
 
 class ArrayTensorTrain:
@@ -330,7 +506,8 @@ def crossinterpolate2_array(
     valueshape,
     initialpivots: Sequence[Sequence[int]] | None = None,
     componentposition: str = "last",
-    componentweights=None,
+    componentweights="auto",
+    nsampleweights: int = 50,
     **kwargs,
 ) -> tuple[ArrayTensorTrain, list[int], list[float]]:
     """Cross interpolate an array-valued ``f(x) -> ndarray`` of shape ``valueshape``.
@@ -348,13 +525,30 @@ def crossinterpolate2_array(
     so every component is sampled from the first iteration and the error
     normalization is honest immediately.
 
+    ``componentweights`` defaults to ``"auto"``, which estimates each component's
+    scale from ``nsampleweights`` sampled points and interpolates ``f_k / w_k``, so
+    that a relative ``tolerance`` means the same thing for every component instead
+    of being dominated by the largest one -- see "Error normalization" in the module
+    docstring, and :func:`estimate_componentweights` for the estimator and its
+    guards. Pass ``None`` for the unweighted behaviour (cheaper in bond dimension
+    when the small components genuinely do not matter) or an explicit array of
+    ``K`` nonzero weights. The sampled values are cached in the adapter TCI2 then
+    uses, so ``"auto"`` does not cost ``nsampleweights`` extra evaluations of ``f``
+    in the end -- only the ones TCI2 would not have made anyway.
+
     Returns ``(ArrayTensorTrain, ranks, errors)``. The underlying
     :class:`~qutecipy.tci2.TensorCI2` and the caching adapter are available as
-    ``.tci`` and ``.func`` on the returned object.
+    ``.tci`` and ``.func`` on the returned object; ``.componentweights`` holds the
+    weights actually used.
     """
+    autoweights = isinstance(componentweights, str)
+    if autoweights and componentweights != "auto":
+        raise ValueError(f"Unknown componentweights {componentweights!r}; use 'auto', None, or an array.")
+
     fa = ArrayValuedFunction(
         dtype, f, localdims, valueshape,
-        componentposition=componentposition, componentweights=componentweights,
+        componentposition=componentposition,
+        componentweights=None if autoweights else componentweights,
     )
 
     if initialpivots is None:
@@ -374,6 +568,18 @@ def crossinterpolate2_array(
                 )
         seen: set[tuple] = set()
         pivots = [p for p in pivots if not (p in seen or seen.add(p))]
+
+    if autoweights:
+        # Derive before the run, not after: TensorCI2.from_function seeds
+        # maxsamplevalue from the initial pivots, and the whole point of the weights
+        # is to make that normalization -- and hence `tolerance` -- mean the same
+        # thing for every component. The initial pivots' own x values seed the
+        # sample, so the point the user cared enough to name is always included.
+        fa.set_componentweights(
+            estimate_componentweights(
+                fa, nsample=nsampleweights, xsamples=[fa.split(p)[0] for p in pivots]
+            )
+        )
 
     tci, ranks, errors = crossinterpolate2(dtype, fa, fa.extendedlocaldims, pivots, **kwargs)
     att = ArrayTensorTrain(
