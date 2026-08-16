@@ -54,6 +54,9 @@ priority":
 - `quantics/{grid,discretized}.py` — `InherentDiscreteGrid`, `DiscretizedGrid`,
   `quantics_function` — full (all three unfolding schemes + custom index tables),
   verified against `QuanticsGrids.jl`'s live output including float edge cases.
+- `quanticstci.py` — `quantics_crossinterpolate`, `QuanticsTensorCI` — an **extension**,
+  not a port (see below): the layer that actually joins `qutecipy.quantics` to the TCI
+  core.
 
 **Remaining, low priority**:
 - `TTCache`/`ThreadedBatchEvaluator` real threading (currently a documented sequential
@@ -176,6 +179,47 @@ bounding amplification at `1/floor`. It remains a finite-sample heuristic — if
 sample misses where a component peaks, that component is over-weighted, which is
 harmless (it just gets sampled above 1). Pass explicit weights when the scales are known
 analytically.
+
+### `qutecipy/quanticstci.py` — quantics TCI (the two ports, joined)
+
+Also additive, and also with **no vendored Julia counterpart**: `reference/` holds
+`TensorCrossInterpolation.jl`, `QuadGK.jl` and `QuanticsGrids.jl`, but *not*
+`QuanticsTCI.jl`. So this is an original design written in the spirit of the rest of the
+package, not a translation, and it claims no API parity with the Julia package of a
+similar name. Public API: `quantics_crossinterpolate`, `QuanticsTensorCI`; tests in
+`tests/test_quanticstci.py`.
+
+**What it does.** Composes `qutecipy.quantics` with `crossinterpolate2`: builds the
+quantics-space function, runs TCI2 on `grid.localdimensions()`, and returns an object
+you call with ordinary coordinates (`qtt(0.375)`, `qtt(x, y)`) instead of quantics
+index strings. Adds `sum()` (over all grid points, linear in sites), `integral()`,
+`grid_eval`/`quantics_eval` for dropping down a level, and `tensortrain()`.
+`initialpivots` are given in coordinates too. The headline case: a 2^20-point
+oscillatory function at **bond dimension 3**, accurate to 1.1e-9 at every grid point.
+
+**Validation, given there is nothing to diff against.** `test_matches_manual_composition_bit_for_bit`
+asserts the wrapper reproduces the hand-written composition exactly — same ranks, same
+errors, `np.array_equal` on every site tensor, `==` on evaluated values — so the layer
+provably adds no reinterpretation. Reductions are checked against closed-form integrals
+and brute-force grid sums, in 1-D and 2-D, and `interleaved` unfolding is covered
+because it changes `localdimensions()` (which is what feeds TCI).
+
+**Caching is ON by default here**, deliberately unlike bare `crossinterpolate2` (which
+matches Julia in not caching). A quantics `f` decodes a mixed-radix digit string before
+the user's function even runs, so it is never as cheap as the dict-of-tuple lookup that
+is caching's break-even point. Measured on the R=20 case: 119 ms → 45 ms (**2.6×**), and
+calls to the user's `f` 8846 → 1502. `cache=False` restores the uncached behavior.
+
+**Two semantics that surprise, both pinned by tests.** (1) `qtt(x)` snaps to the
+*nearest grid point* — off-grid accuracy is bounded by the grid spacing, not by
+`tolerance`. This caught the first draft of the test suite, which compared against `f`
+at off-grid coordinates and failed at 1e-7 when the interpolation was good to 1e-9.
+(2) `integral()` is the rectangle rule, error `O(base^-R)` per dimension and unrelated
+to `tolerance` — at R=20 the interpolation is good to 1.1e-9 while the integral is good
+to 1.3e-6. Raise `R`, not `tolerance`. It **raises** rather than returning a
+quietly-wrong number for `includeendpoint=True` grids (whose points span the closed
+interval, so `sum() * step` would cover one extra step per such axis) and for
+`InherentDiscreteGrid` (no step size; use `sum()`).
 
 **Prior art.** arXiv:2407.02454 (the xfac/TCI review) has no vector-/matrix-valued TCI —
 its "block rook search" is a scalar pivot-*search* variant, unrelated. Carrying a
@@ -517,12 +561,14 @@ three unfolding schemes plus custom index tables) and translate its test suite
 `inherentdiscretegrid_tests.jl`, `quantics_tests.jl`, `origcoord_tests.jl`,
 `origcoord_floating_point_tests.jl`, `utilities_tests.jl`) into `tests/test_quantics_*.py`
 — the float edge-case tests especially, since they're the ones most likely to expose
-a subtle Python/NumPy floating-point translation bug. `QuanticsTCI.jl` itself
-(the layer that actually *combines* `QuanticsGrids` + `TensorCrossInterpolation` into
-one high-level "interpolate a scale-separated function" API) remains out of scope for
-this task — `qutecipy.quantics` and the core `qutecipy` TCI port are both ported as
-independent, complete libraries; wiring them together end-to-end (mirroring
-`QuanticsTCI.jl`) can be a natural follow-up once both are solid.
+a subtle Python/NumPy floating-point translation bug.
+
+`QuanticsTCI.jl` itself (the layer that *combines* `QuanticsGrids` +
+`TensorCrossInterpolation` into one high-level "interpolate a scale-separated function"
+API) is **not vendored** in `reference/` and was never ported. That wiring now exists
+anyway, as `qutecipy/quanticstci.py` — see "Extensions beyond the Julia reference"
+above. It is an original design, not a translation, and makes no claim of API parity
+with the Julia package of a similar name.
 
 ## Target Python package layout (proposed)
 
@@ -550,6 +596,7 @@ qutecipy/
   integration.py          # integration.jl (Gauss-Kronrod quadrature via TCI)
   contraction.py          # contraction.jl (MPO x MPO contract, 3 algorithms)
   arrayvalued.py          # EXTENSION, no Julia counterpart -- array-valued TCI
+  quanticstci.py          # EXTENSION, no Julia counterpart -- quantics TCI (quantics + tci2)
   quantics/
     grid.py                # QuanticsGrids.jl's grid.jl -> InherentDiscreteGrid
     discretized.py          # QuanticsGrids.jl's grid_discretized.jl -> DiscretizedGrid
@@ -564,6 +611,7 @@ reference/TensorCrossInterpolation.jl/   # vendored Julia source, read-only, for
 reference/QuadGK.jl/                     # vendored Julia source, read-only, for the kronrod() port
 reference/QuanticsGrids.jl/              # vendored Julia source, read-only, for qutecipy.quantics
 pyproject.toml
+README.md                                # user-facing intro; CLAUDE.md is the design record
 ```
 
 This is a starting proposal, not gospel — adjust if a flatter or differently-split
@@ -796,13 +844,9 @@ for `crossinterpolate1`/`crossinterpolate2`.
 - Whether to target NumPy-only or allow optional JAX/PyTorch backends for
   autodiff/GPU (Julia version has no such backend abstraction — recommend NumPy-only
   for the initial faithful port, revisit later).
-- **Scope of the quantics-TCI ecosystem**: this project is named `qutecipy`, which
-  reads as "quantics TCI python" — but `QuanticsGrids.jl`/`QuanticsTCI.jl` (the
-  packages that actually add the quantics representation on top of
-  `TensorCrossInterpolation.jl`) are currently out of scope per the "External
-  dependencies" audit above, since only `TensorCrossInterpolation.jl` itself was
-  requested for translation. Worth confirming with the user whether `qutecipy` is
-  meant to eventually cover the full quantics-TCI stack (in which case
-  `QuanticsGrids.jl` deserves its own porting plan alongside this one) or is scoped
-  to the base cross-interpolation library only, with the name chosen for other
-  reasons.
+- ~~**Scope of the quantics-TCI ecosystem**~~ — **resolved.** `qutecipy` does cover the
+  full quantics-TCI stack: `QuanticsGrids.jl` is ported (`qutecipy.quantics`), and the
+  layer that joins it to the TCI core exists as `qutecipy/quanticstci.py`
+  (`quantics_crossinterpolate`). `QuanticsTCI.jl` itself was never vendored, so that
+  layer is an original design rather than a port — see "Extensions beyond the Julia
+  reference".
