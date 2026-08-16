@@ -48,7 +48,11 @@ def randomsubset(items: Sequence[T], n: int) -> list[T]:
 
 def pushrandomsubset(subset: list[T], items: Iterable[T], n: int) -> None:
     """Extend subset in place with n random elements from items \\ subset."""
-    remaining = [x for x in items if x not in subset]
+    # Set membership rather than a linear scan of `subset`: arrlu calls this once per rook
+    # restart with `items = range(matrixsize)`, so the list version was quadratic in the
+    # matrix dimension. Order of `remaining` is unchanged, so the draw is the same.
+    seen = set(subset)
+    remaining = [x for x in items if x not in seen]
     subset.extend(randomsubset(remaining, n))
 
 

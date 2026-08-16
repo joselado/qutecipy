@@ -17,6 +17,10 @@ from qutecipy.util import pushrandomsubset
 
 _NUMBA_DTYPES = (np.dtype(np.float64), np.dtype(np.complex128))
 
+# Rank up to which _build_lu zeroes the off-triangle stripes with an explicit loop
+# instead of np.tril/np.triu (see _build_lu; crossover measured around here).
+_TRIANGULARIZE_BY_LOOP = 32
+
 
 def submatrixargmax(A: np.ndarray, startindex: int, f: Callable = np.abs):
     """Location of the max of f(A) within the trailing submatrix A[startindex:, startindex:],
@@ -87,8 +91,42 @@ class rrLU:
         y = A[k, k + 1:]
         A[k + 1:, k + 1:] -= np.outer(x, y)
 
+    def _build_lu(self, A: np.ndarray) -> None:
+        """Read the triangular factors back out of the (already pivoted) work matrix.
+
+        Split out of ``_optimize`` so ``arrlu``'s rook iteration -- which only reads
+        ``rowindices``/``colindices``/``npivots`` until the row and column sets stop
+        moving -- can skip it and finalize once, off the last work matrix.
+        """
+        n = self.npivot
+        if n <= _TRIANGULARIZE_BY_LOOP:
+            # For the low ranks this sees in TCI2's inner loops, zeroing the few
+            # off-triangle stripes directly beats np.tril/np.triu, which each build a
+            # full-size boolean mask (via np.tri) before selecting -- measured ~3x at
+            # rank 6. Above the threshold the mask amortizes and np.tril wins, so the
+            # dense full-rank path keeps using it.
+            self.L = A[:, :n].copy()
+            for j in range(1, n):
+                self.L[:j, j] = 0
+            self.U = A[:n, :].copy()
+            for i in range(1, n):
+                self.U[i, :i] = 0
+        else:
+            self.L = np.tril(A[:, :n])
+            self.U = np.triu(A[:n, :])
+        if np.any(np.isnan(self.L)):
+            raise FloatingPointError("lu.L contains NaNs")
+        if np.any(np.isnan(self.U)):
+            raise FloatingPointError("lu.U contains NaNs")
+
+        if self.leftorthogonal:
+            np.fill_diagonal(self.L, 1.0)
+        else:
+            np.fill_diagonal(self.U, 1.0)
+
     def _optimize(
-        self, A: np.ndarray, maxrank: int | None = None, reltol: float = 1e-14, abstol: float = 0.0
+        self, A: np.ndarray, maxrank: int | None = None, reltol: float = 1e-14, abstol: float = 0.0,
+        buildlu: bool = True,
     ) -> None:
         maxrank = min(maxrank if maxrank is not None else min(A.shape), A.shape[0], A.shape[1])
 
@@ -117,17 +155,8 @@ class rrLU:
                 maxerror = max(maxerror, self.error)
                 self._add_pivot(A, newpivot)
 
-        self.L = np.tril(A[:, : self.npivot])
-        self.U = np.triu(A[: self.npivot, :])
-        if np.any(np.isnan(self.L)):
-            raise FloatingPointError("lu.L contains NaNs")
-        if np.any(np.isnan(self.U)):
-            raise FloatingPointError("lu.U contains NaNs")
-
-        if self.leftorthogonal:
-            np.fill_diagonal(self.L, 1.0)
-        else:
-            np.fill_diagonal(self.U, 1.0)
+        if buildlu:
+            self._build_lu(A)
 
         if self.npivot >= min(A.shape):
             self.error = 0.0
@@ -287,6 +316,11 @@ def arrlu(
 
     batchf = f if usebatcheval else _default_batchf(f, dtype)
 
+    # The rook iteration below only consults lu.rowindices()/colindices()/npivots(), so
+    # each _optimize call runs with buildlu=False and the triangular factors are read out
+    # once at the end, from whichever work matrix the loop stopped on.
+    submatrix = None
+
     while True:
         if leftorthogonal:
             pushrandomsubset(J0, range(matrixsize[1]), max(1, len(J0)))
@@ -300,7 +334,7 @@ def arrlu(
             else:
                 submatrix = batchf(lu.rowpermutation.tolist(), J0)
             lu.npivot = 0
-            lu._optimize(submatrix, maxrank=maxrank, reltol=reltol, abstol=abstol)
+            lu._optimize(submatrix, maxrank=maxrank, reltol=reltol, abstol=abstol, buildlu=False)
             islowrank = islowrank or (lu.npivots() < min(submatrix.shape))
             if lu.rowindices() == I0 and lu.colindices() == J0:
                 break
@@ -310,6 +344,9 @@ def arrlu(
 
         if islowrank or len(I0) >= maxrank:
             break
+
+    if submatrix is not None:
+        lu._build_lu(submatrix)
 
     if lu.L.shape[0] < matrixsize[0]:
         I2 = [i for i in range(matrixsize[0]) if i not in set(I0)]

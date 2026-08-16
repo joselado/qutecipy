@@ -54,12 +54,21 @@ def _union_preserve(a: Sequence, b: Sequence) -> list:
 
 
 def reconstruct_global_pivots_from_ijset(localdims, Isets, Jsets) -> list[tuple]:
+    # Deduplicated through a set rather than pushunique's linear scan: the loop below is
+    # quadruply nested, so a linear membership test made this quadratic in the number of
+    # reconstructed pivots. Insertion order is unchanged.
     pivots: list[tuple] = []
+    seen: set[tuple] = set()
     for i in range(len(Isets)):
         for iset in Isets[i]:
+            head = tuple(iset)
             for jset in Jsets[i]:
+                tail = tuple(jset)
                 for j in range(localdims[i]):
-                    pushunique(pivots, tuple(iset) + (j,) + tuple(jset))
+                    p = head + (j,) + tail
+                    if p not in seen:
+                        seen.add(p)
+                        pivots.append(p)
     return pivots
 
 
@@ -80,10 +89,13 @@ class SubMatrix:
             res = np.asarray(self.f.batchevaluate(Iset, Jset, 0)).reshape(len(irows), len(icols))
         else:
             # Precompute each row's/col's list() once instead of re-building it on every
-            # inner-loop iteration (list(self.rows[i]) only depends on i, not j).
+            # inner-loop iteration (list(self.rows[i]) only depends on i, not j), and
+            # build one flat list rather than a list of row lists -- np.array over a
+            # nested sequence has to walk and size-check every sublist.
             rowlists = [list(self.rows[i]) for i in irows]
             collists = [list(self.cols[j]) for j in icols]
-            res = np.array([[self.f(rl + cl) for cl in collists] for rl in rowlists])
+            flat = [self.f(rl + cl) for rl in rowlists for cl in collists]
+            res = np.array(flat).reshape(len(rowlists), len(collists))
         if res.size:
             self.maxsamplevalue = max(self.maxsamplevalue, float(np.max(np.abs(res))))
         return res

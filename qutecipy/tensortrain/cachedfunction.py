@@ -19,6 +19,10 @@ import numpy as np
 
 from qutecipy.tensortrain.batcheval import BatchEvaluator, isbatchevaluable
 
+# Cache-miss sentinel: distinct from any value a user function could legitimately return
+# (including None or NaN), so a single `dict.get` can distinguish "absent" from "cached".
+_MISSING = object()
+
 
 class CachedFunction(BatchEvaluator):
     def __init__(self, dtype, f: Callable, localdims: Sequence[int], cache: dict | None = None):
@@ -31,9 +35,16 @@ class CachedFunction(BatchEvaluator):
         key = tuple(x)
         if len(key) != len(self.localdims):
             raise ValueError("Invalid length of x")
-        if key not in self.cache:
-            self.cache[key] = self.f(list(key))
-        return self.cache[key]
+        # One dict lookup on a hit (the common case by construction -- this class only
+        # earns its keep when hits dominate) instead of a `in` test followed by a
+        # subscript. A miss caches None-valued results correctly too, since absence is
+        # signalled by the exception rather than by the value.
+        try:
+            return self.cache[key]
+        except KeyError:
+            val = self.f(list(key))
+            self.cache[key] = val
+            return val
 
     def __setitem__(self, indexset: Sequence[int], val) -> None:
         self.cache[tuple(indexset)] = val
@@ -62,15 +73,31 @@ class CachedFunction(BatchEvaluator):
         lefts = [tuple(l) for l in leftindexset]
         rights = [tuple(r) for r in rightindexset]
 
-        def get(key):
-            if key not in self.cache:
-                self.cache[key] = self.f(list(key))
-            return self.cache[key]
+        cache = self.cache
+        f = self.f
+        cacheget = cache.get
+        _MISS = _MISSING
 
         # Flat comprehension instead of per-cell numpy __setitem__ inside a triple loop --
         # cache population is order-independent, so any traversal order is equivalent; this
         # one matches the (i,c,j) axis order used for the final reshape.
-        flat = [get(l + k + r) for l in lefts for k in combos for r in rights]
+        #
+        # The hit path is one bound-method dict lookup with a sentinel default; the miss
+        # path is pushed into a helper that is only called when the sentinel comes back.
+        # (The previous closure cost a Python call plus two dict lookups on *every* cell,
+        # which is what made caching a net loss on cheap functions.) The `lk = l + k`
+        # prefix is likewise hoisted out of the innermost loop.
+        def _miss(key):
+            val = f(list(key))
+            cache[key] = val
+            return val
+
+        flat = [
+            val if (val := cacheget(key := lk + r, _MISS)) is not _MISS else _miss(key)
+            for lidx in lefts
+            for lk in (lidx + k for k in combos)
+            for r in rights
+        ]
         result = np.array(flat, dtype=self.dtype).reshape(len(lefts), len(combos), len(rights))
         return result.reshape((len(leftindexset), *center_dims, len(rightindexset)))
 
@@ -80,12 +107,20 @@ class CachedFunction(BatchEvaluator):
         result = np.empty((len(leftindexset), len(combos), len(rightindexset)), dtype=self.dtype)
         filled = np.zeros(result.shape, dtype=bool)
 
-        for j, rightindex in enumerate(rightindexset):
+        # tuple() conversions and the `left + center` prefix are hoisted out of the
+        # innermost loop; the lookup takes a sentinel default so a hit costs one dict
+        # probe rather than a `in` test plus a subscript. Loop nesting is reordered to
+        # put the varying part innermost -- this pass only fills cells, so order is free.
+        lefts = [tuple(l) for l in leftindexset]
+        rights = [tuple(r) for r in rightindexset]
+        cacheget = self.cache.get
+        for i, lidx in enumerate(lefts):
             for c, k in enumerate(combos):
-                for i, leftindex in enumerate(leftindexset):
-                    key = tuple(leftindex) + k + tuple(rightindex)
-                    if key in self.cache:
-                        result[i, c, j] = self.cache[key]
+                lk = lidx + k
+                for j, r in enumerate(rights):
+                    val = cacheget(lk + r, _MISSING)
+                    if val is not _MISSING:
+                        result[i, c, j] = val
                         filled[i, c, j] = True
 
         left_needs = [i for i in range(len(leftindexset)) if not filled[i, :, :].all()]
@@ -94,20 +129,23 @@ class CachedFunction(BatchEvaluator):
             leftindexset_ = [leftindexset[i] for i in left_needs]
             rightindexset_ = [rightindexset[j] for j in right_needs]
             result_ = self.f.batchevaluate(leftindexset_, rightindexset_, ncent)
-            for jj, j in enumerate(right_needs):
-                rightindex = rightindexset[j]
+            cache = self.cache
+            for ii, i in enumerate(left_needs):
+                lidx = lefts[i]
                 for c, k in enumerate(combos):
-                    for ii, i in enumerate(left_needs):
-                        leftindex = leftindexset[i]
-                        key = tuple(leftindex) + k + tuple(rightindex)
-                        self.cache[key] = result_[(ii, *k, jj)]
+                    lk = lidx + k
+                    sub = result_[(ii, *k)]
+                    for jj, j in enumerate(right_needs):
+                        val = sub[jj]
+                        cache[lk + rights[j]] = val
+                        if not filled[i, c, j]:
+                            result[i, c, j] = val
+                            filled[i, c, j] = True
 
-        for j, rightindex in enumerate(rightindexset):
-            for c, k in enumerate(combos):
-                for i, leftindex in enumerate(leftindexset):
-                    if filled[i, c, j]:
-                        continue
-                    key = tuple(leftindex) + k + tuple(rightindex)
-                    result[i, c, j] = self.cache[key]
+        unfilled = np.argwhere(~filled)
+        if unfilled.size:
+            cache = self.cache
+            for i, c, j in unfilled:
+                result[i, c, j] = cache[lefts[i] + combos[c] + rights[j]]
 
         return result.reshape((len(leftindexset), *center_dims, len(rightindexset)))

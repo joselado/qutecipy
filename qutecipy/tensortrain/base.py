@@ -53,17 +53,20 @@ class AbstractTensorTrain(ABC):
                 f"To evaluate a tt of length {len(sts)}, you have to provide "
                 f"{len(sts)} indices, but there were {len(indexset)}."
             )
+        # The chain is carried as a 1-D vector rather than a 1 x r matrix: the products
+        # are then BLAS gemv instead of a degenerate gemm, and the leading `1` axis never
+        # has to be re-sliced. Same operands, same left-to-right association, same
+        # summation order -- bit-identical results, just less per-site overhead.
         result = None
         for T, i in zip(sts, indexset):
             if isinstance(i, (list, tuple, np.ndarray)):
                 if len(i) != T.ndim - 2:
                     raise ValueError(f"Index {i} does not match tensor shape {T.shape}.")
-                key = (slice(None), *i, slice(None))
+                mat = T[(slice(None), *i, slice(None))]
             else:
-                key = (slice(None), i, slice(None))
-            mat = T[key]
-            result = mat if result is None else result @ mat
-        return result[0, 0]
+                mat = T[:, i, :]
+            result = mat[0] if result is None else result @ mat
+        return result[0]
 
     def __call__(self, indexset):
         return self.evaluate(indexset)

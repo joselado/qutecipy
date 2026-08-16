@@ -50,7 +50,10 @@ def _generic_batchevaluate(
     centers = [list(cindex) for cindex in center_combos]
     rights = [list(rindex) for rindex in rightindexset]
 
-    flat = [f(l + c + r) for l in lefts for c in centers for r in rights]
+    # `l + c` is loop-invariant in the innermost (rights) loop, so it is built once per
+    # (l, c) pair instead of once per cell -- for a typical batch |rights| is the largest
+    # of the three, and list concatenation is a real fraction of this loop's own cost.
+    flat = [f(lc + r) for l in lefts for lc in (l + c for c in centers) for r in rights]
     result = np.array(flat, dtype=dtype).reshape(len(lefts), len(centers), len(rights))
     return result.reshape((len(leftindexset), *center_dims, len(rightindexset)))
 

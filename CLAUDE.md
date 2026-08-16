@@ -208,6 +208,94 @@ automatable, since the library can't compile a user's arbitrary Python callback 
 them; see `crossinterpolate2`'s docstring for the `CachedFunction` guidance that already
 covers the redundant-call-count part of this).
 
+### Second optimization pass
+
+A later profiling pass on a *different, much noisier machine* (shared 14-core box under
+load ~20 from unrelated jobs; `time.process_time`, min of 5, and every before/after pair
+run **interleaved** in alternating processes against a pristine checkout, because
+consecutive single-shot runs on this box drift by ±40%). Numbers below are therefore
+only comparable *within* this table — do not splice them into the Julia table above,
+which was measured on a machine roughly 2× faster.
+
+| | before | after | |
+|---|---|---|---|
+| 8D full pivot, plain `f` | 462 ms | 418 ms | 1.10× |
+| 8D full pivot, `CachedFunction` | 481 ms | 416 ms | 1.16× |
+| 20D rook pivot, plain `f` | 302 ms | 157 ms | **1.92×** |
+| 20D rook pivot, `CachedFunction` | 121 ms | 75 ms | **1.61×** |
+| `rrLU` 200×200 dense | 9.97 ms | 9.92 ms | unchanged (by design) |
+| `TensorTrain.evaluate` ×4000, 20 sites | 151 ms | 133 ms | 1.13× |
+
+What changed, in descending order of payoff:
+
+1. **The global pivot finder no longer walks the whole chain per candidate**
+   (`globalpivot.py::_OneSiteScan`). `DefaultGlobalPivotFinder`'s greedy scan only ever
+   visits points differing from its base point in **one** coordinate, so all site
+   tensors but that one contribute identical factors across the whole inner loop. The
+   untouched factors are now contracted once into a left/right environment pair per
+   `(point, site)`, and the whole row of predictions costs two matrix products instead
+   of `L` per candidate value. This was ~30% of the 20D rook benchmark
+   (800 `evaluate` calls at ~120 µs). Caveat, documented in the class docstring: the
+   environments accumulate outward from the ends rather than strictly left to right, so
+   values can differ in the last ulp — acceptable because they feed a `>`-comparison in
+   a search that is randomized anyway. Falls back to plain per-point evaluation for any
+   TT that isn't 3-leg with trivial boundary bonds.
+2. **`CachedFunction` stopped being a net loss.** It previously *slowed down* the 8D
+   benchmark (537 ms cached vs 449 ms uncached in the first measurement) despite cutting
+   `f` calls 4.7×: `_batcheval_default`'s per-cell closure cost a Python call plus two
+   dict lookups on every cell, hit or miss. Now the hit path is a single bound
+   `dict.get` with a module-level `_MISSING` sentinel (so a cached `None`/`NaN` is still
+   distinguished from absence), the miss path is a helper called only on a sentinel
+   return, and the `left + center` key prefix is hoisted out of the innermost loop.
+   Scalar `__call__` uses `try/except KeyError` for the same reason.
+   `_batcheval_for_batchevaluator` got the same treatment plus a fused fill (the
+   post-batch loop now populates `result` directly instead of re-reading every cell back
+   out of the cache).
+3. **`arrlu`'s rook iteration no longer rebuilds L and U every pass**
+   (`rrLU._build_lu`, new `buildlu=` flag on `_optimize`). The rook loop only consults
+   `rowindices`/`colindices`/`npivots` until the row and column sets stop moving, but
+   each `_optimize` was paying `np.tril` + `np.triu` + two full `isnan` scans +
+   `fill_diagonal`. The factors are now read out once at the end, off whichever work
+   matrix the loop stopped on. `_build_lu` additionally zeroes the off-triangle stripes
+   with an explicit loop when `npivot <= 32` (measured ~3× faster than `np.tril` at the
+   rank-6 sizes TCI2's inner loops actually see, since `np.tril`/`np.triu` each build a
+   full-size mask via `np.tri` first); above the threshold `np.tril` still wins, which
+   is why the dense 200×200 row above is unchanged.
+4. **`AbstractTensorTrain.evaluate`** carries the chain as a 1-D vector instead of a
+   `1 x r` matrix (BLAS gemv rather than a degenerate gemm, and no re-slicing of the
+   leading axis). Bit-identical — same operands, same left-to-right association.
+5. Smaller, mostly asymptotic hygiene: `SubMatrix.__call__` builds one flat list instead
+   of a list of row lists; `_generic_batchevaluate` hoists the `left + center` prefix;
+   `pushrandomsubset` and `reconstruct_global_pivots_from_ijset` use set membership
+   instead of linear scans (both were quadratic in the matrix dimension / pivot count).
+
+**Two negative results worth not re-deriving:**
+
+- **Python tuples do not cache their hash.** Every `dict`-of-`tuple` lookup rehashes the
+  whole multi-index, which puts a hard floor of roughly 0.3–0.8 µs on a cache hit
+  (measured: 380k lookups of 8-tuples ≈ 0.29 s including the key concatenation, vs
+  ≈ 0.57 s to just call the 8D benchmark's `f` instead). So `CachedFunction` is only
+  ever break-even on a *cheap* `f` — on the 8D benchmark, post-fix, cached (416 ms) and
+  uncached (418 ms) are indistinguishable, while on the 20D rook case (14× redundancy)
+  it is a clean 2.1× win over uncached. CLAUDE.md's existing "wrap it whenever `f` costs
+  more than a dict-of-tuple lookup" advice is exactly right; this quantifies the
+  threshold.
+- **Julia's mixed-radix integer cache key would not help.** Encoding the multi-index as
+  a single `int` and keying on that measured *no faster* than tuple keys on CPython 3.14
+  (0.291 s vs 0.289 s for the same 380k lookups, incremental encoding, prefix hoisted).
+  The decision above to drop `BitIntegers`/integer encoding now has empirical backing,
+  not just the arbitrary-precision-`int` argument.
+
+The remaining gap on the 8D full-pivot case is not addressable in the library: ~2/3 of
+that benchmark's runtime is the user's `f` itself (380,777 calls — Julia makes the same
+number, just at JIT speed), and the batch loops around it are already near the CPython
+floor of one list concatenation plus one call per cell.
+
+Validation for this pass: full suite green (119 passed) with numba **on and off** — the
+`_optimize` restructure only shows up in the pure-Python fallback, which the numba path
+never executes for float64 — and `ruff check qutecipy/` reports the same 12 pre-existing
+findings as before the changes.
+
 ## Reference source map
 
 `reference/TensorCrossInterpolation.jl/src/`, in dependency order (mirrors the

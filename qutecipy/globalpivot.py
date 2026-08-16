@@ -37,6 +37,64 @@ class AbstractGlobalPivotFinder(ABC):
     ) -> list[tuple]: ...
 
 
+class _OneSiteScan:
+    """All TT values on the "cross" through a base point: for a fixed point and site
+    ``p``, every value obtained by varying only the p-th index.
+
+    The greedy coordinate scan below asks for exactly that, one site at a time, so
+    evaluating the full chain per candidate value re-multiplies L-1 identical factors
+    every time. Here the untouched factors are contracted once into a left and a right
+    environment, and the whole row of predictions then costs two matrix products
+    regardless of the local dimension.
+
+    Values are mathematically identical to ``tt(point)``, but the environments are
+    accumulated outward from the ends rather than strictly left to right, so they can
+    differ in the last ulp -- fine here, where they feed a >-comparison of interpolation
+    errors in a search that is randomized to begin with. Falls back to plain per-point
+    evaluation for anything that isn't a 3-leg (single physical index per site) TT.
+    """
+
+    def __init__(self, tt):
+        self.tt = tt
+        sts = tt.sitetensors()
+        self.sts = sts
+        # The environment recursion seeds both ends with a length-1 vector, so it needs
+        # the usual trivial boundary bonds on top of one physical index per site.
+        self.simple = (
+            all(T.ndim == 3 for T in sts) and sts[0].shape[0] == 1 and sts[-1].shape[-1] == 1
+        )
+        self._point: list | None = None
+
+    def _build_environments(self, point) -> None:
+        sts = self.sts
+        n = len(sts)
+        # left[p] = product of sites 0..p-1 at `point`; right[p] = product of sites p+1..n-1.
+        left: list = [None] * n
+        acc = np.ones(1, dtype=sts[0].dtype)
+        for p in range(n):
+            left[p] = acc
+            acc = acc @ sts[p][:, point[p], :]
+        right: list = [None] * n
+        acc = np.ones(1, dtype=sts[-1].dtype)
+        for p in range(n - 1, -1, -1):
+            right[p] = acc
+            acc = sts[p][:, point[p], :] @ acc
+        self._left, self._right = left, right
+        self._point = list(point)
+
+    def __call__(self, point, p: int) -> np.ndarray:
+        if not self.simple:
+            return np.array([
+                self.tt(list(point[:p]) + [v] + list(point[p + 1:]))
+                for v in range(self.sts[p].shape[1])
+            ])
+        if self._point != list(point):
+            self._build_environments(point)
+        T = self.sts[p]
+        # (l, d, r) x (r,) -> (l, d), then (l,) x (l, d) -> (d,)
+        return self._left[p] @ (T.reshape(-1, T.shape[2]) @ self._right[p]).reshape(T.shape[0], T.shape[1])
+
+
 class DefaultGlobalPivotFinder(AbstractGlobalPivotFinder):
     def __init__(self, nsearch: int = 5, maxnglobalpivot: int = 5, tolmarginglobalsearch: float = 10.0):
         self.nsearch = nsearch
@@ -52,6 +110,8 @@ class DefaultGlobalPivotFinder(AbstractGlobalPivotFinder):
 
         initial_points = [[rng.randrange(input.localdims[p]) for p in range(L)] for _ in range(self.nsearch)]
 
+        predict = _OneSiteScan(input.current_tt)
+
         found_pivots: list[tuple] = []
         for point in initial_points:
             current_point = list(point)
@@ -59,9 +119,15 @@ class DefaultGlobalPivotFinder(AbstractGlobalPivotFinder):
             best_point = list(point)
 
             for p in range(L):
+                # Every point visited in the inner loop differs from `point` in at most the
+                # p-th coordinate, so all site tensors but the p-th contribute the same
+                # factors throughout it. _OneSiteScan contracts those into a left/right
+                # environment pair once per (point, p) and returns all localdims[p]
+                # predictions at once, instead of walking the whole chain per candidate.
+                predictions = predict(point, p)
                 for v in range(input.localdims[p]):
                     current_point[p] = v
-                    error = abs(f(current_point) - input.current_tt(current_point))
+                    error = abs(f(current_point) - predictions[v])
                     if error > best_error:
                         best_error = error
                         best_point = list(current_point)
