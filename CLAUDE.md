@@ -80,6 +80,45 @@ insertion; and, in `contraction.py`, a fused-index ordering convention
 to Julia's native column-major reshape — hit twice, once in `batchevaluate`'s
 center-site accumulation and once in `contract_TCI`'s final un-fuse step.
 
+**Upstream bug fixed, not reproduced: `MatrixACA`'s pivot value is order-dependent.**
+`matrixaca.jl`'s `addpivotrow!` unconditionally does `push!(aca.alpha, 1 / aca.u[x_k, end])`.
+That is only correct when the pivot's *column* was added first, because `u[:, end]` is
+then `u_k`, the residual column at `y_k`, and `u_k[x_k] = R_{k-1}[x_k, y_k]` is the pivot
+value. `MatrixACA.add_pivot` does add the column first, so the matrix layer in isolation
+is fine — but `TensorCI1.add_global_pivot` (faithfully ported, `addglobalpivot!`) adds
+*every* bond's pivot row first, in a left-to-right loop, and only then every bond's pivot
+column in a right-to-left loop. It has to: `_add_pivot_row` propagates into `Pi[p+1]` and
+`_add_pivot_col` into `Pi[p-1]`, so the two directions cannot be interleaved per bond.
+In that order `u[x_k, end]` is still the *previous* pivot's column, so `alpha_k` is
+simply the wrong number.
+
+Nothing crashes: `T`/`P` come from the `MatrixCI` `cross`, not the ACA, so the TT stays
+correct and the ranks asserted right after a global-pivot insertion are unaffected. What
+breaks is the ACA's cross-interpolation property (its reconstruction stops being exact on
+its own pivot rows/columns), and the ACA is exactly what `add_pivot` searches for the next
+pivot — so from that point on every pivot at that bond is chosen off a meaningless
+residual. On `test_lorentz_mps`'s `additionalpivots` case that took the rank from 15 to
+100 (the `Pi` bound), burned all 200 sweeps without converging, and ended in
+`1/0 -> inf -> nan` once a bond saturated — the `RuntimeWarning: divide by zero` in
+`aca.py` that the test suite used to emit while still passing, since every assertion
+around it was a loose upper bound.
+
+The fix (`qutecipy/matrix/aca.py`) makes `MatrixACA` order-agnostic: `alpha_k` is appended
+by whichever of `add_pivot_col`/`add_pivot_row` *completes* pivot `k`
+(`_push_alpha_if_complete`), and `rank()` counts complete pivots (`len(alpha)`) rather
+than `len(rowindices)`, so a half-added pivot cannot desync `submatrix`. Both are exact
+no-ops for the column-then-row order, i.e. for every path other than global-pivot
+insertion — verified: `crossinterpolate1` without `additionalpivots` gives bit-identical
+ranks, link dimensions and errors before and after. One pre-existing hazard is untouched:
+`add_global_pivot`'s proposal loop can in principle run out its `range(n)` iterations
+without `empties_I == empties_J`, leaving a bond with a row and no column — upstream has
+the same hole, and it already left `P[p]` non-square. `rank() == len(alpha)` only changes
+what happens *next* there, from a silently stale residual to a loud `IndexError` out of
+`submatrix`. Regression tests:
+`tests/test_matrixaca.py::test_row_before_col_matches_col_before_row`,
+`::test_rank_counts_complete_pivots_only`, and
+`tests/test_tensorci1.py::test_global_pivot_keeps_bond_acas_consistent`.
+
 No test fixtures were copy-pasted from Julia's `test/*.jl` output — every ported test
 either checks a closed-form/analytic result, or was validated once against a live
 Julia run during development and then re-expressed as a self-contained Python

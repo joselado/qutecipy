@@ -185,7 +185,11 @@ class MatrixACA(AbstractMatrixCI):
         return self.u.shape[1]
 
     def rank(self) -> int:
-        return len(self.rowindices)
+        # Number of *complete* rank-1 terms, i.e. pivots that have both a row and a
+        # column -- which is what submatrix()/evaluate() consume. Julia's
+        # `length(ci.rowindices)` agrees with this in every balanced state, but not
+        # while a pivot is half-added (see _push_alpha_if_complete).
+        return len(self.alpha)
 
     def is_empty(self) -> bool:
         return len(self.colindices) == 0
@@ -211,6 +215,7 @@ class MatrixACA(AbstractMatrixCI):
     def add_pivot_col(self, a: np.ndarray, yk: int) -> None:
         self.colindices.append(yk)
         self.u = np.hstack([self.u, self._uk(a).reshape(-1, 1)])
+        self._push_alpha_if_complete()
 
     def _vk(self, a: np.ndarray) -> np.ndarray:
         """Residual row v_k(y): the new row deflated against previous pivots."""
@@ -225,7 +230,27 @@ class MatrixACA(AbstractMatrixCI):
     def add_pivot_row(self, a: np.ndarray, xk: int) -> None:
         self.rowindices.append(xk)
         self.v = np.vstack([self.v, self._vk(a).reshape(1, -1)])
-        self.alpha.append(1.0 / self.u[xk, -1])
+        self._push_alpha_if_complete()
+
+    def _push_alpha_if_complete(self) -> None:
+        """Append alpha_k = 1/delta_k once *both* legs of pivot k are in place.
+
+        The pivot value delta_k = R_{k-1}[x_k, y_k] is only readable off u_k, the
+        deflated column y_k, so alpha must be appended by whichever of
+        ``add_pivot_col``/``add_pivot_row`` runs second.
+
+        **Deliberate divergence from matrixaca.jl** (see CLAUDE.md): upstream
+        appends ``1 / u[x_k, end]`` unconditionally in ``addpivotrow!``, which is
+        only correct for the column-then-row order used by ``add_pivot``.
+        ``TensorCI1.add_global_pivot`` adds every bond's row first and every
+        bond's column afterwards (it has to: row updates propagate rightwards
+        through Pi, column updates leftwards), so there ``u[x_k, end]`` is still
+        the *previous* pivot's column and alpha_k came out wrong -- silently
+        destroying the ACA's interpolation property, and with it every subsequent
+        pivot search at that bond.
+        """
+        if len(self.rowindices) == len(self.colindices) > len(self.alpha):
+            self.alpha.append(1.0 / self.u[self.rowindices[-1], -1])
 
     def add_pivot(self, a: np.ndarray, pivotindices: tuple[int, int] | None = None) -> None:
         if pivotindices is not None:

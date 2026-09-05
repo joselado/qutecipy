@@ -66,3 +66,48 @@ def test_3x3_complex():
 
     assert np.allclose(aca.to_matrix(), A)
     assert np.allclose(aca[:, :], A)
+
+
+def test_row_before_col_matches_col_before_row():
+    """Adding a pivot's row first must give the same ACA as adding its column first.
+
+    ``TensorCI1.add_global_pivot`` inserts every bond's pivot row before any bond's
+    pivot column, so ``MatrixACA`` has to be order-agnostic. Upstream
+    ``matrixaca.jl`` is not: it reads the pivot value off ``u[x_k, end]`` inside
+    ``addpivotrow!``, which is the *previous* pivot's column when the row goes
+    first, silently poisoning ``alpha`` and every later residual.
+    """
+    rng = np.random.default_rng(20240906)
+    A = rng.random((8, 12))
+    pivots = [(3, 5), (6, 1), (1, 9), (7, 4)]
+
+    colfirst = MatrixACA.from_matrix(A, (0, 0))
+    rowfirst = MatrixACA.from_matrix(A, (0, 0))
+    for i, j in pivots:
+        colfirst.add_pivot_col(A, j)
+        colfirst.add_pivot_row(A, i)
+        rowfirst.add_pivot_row(A, i)
+        rowfirst.add_pivot_col(A, j)
+
+        assert rowfirst.rowindices == colfirst.rowindices
+        assert rowfirst.colindices == colfirst.colindices
+        assert np.allclose(rowfirst.alpha, colfirst.alpha)
+        assert np.allclose(rowfirst.to_matrix(), colfirst.to_matrix())
+
+        # Cross-interpolation property: exact on the pivot rows and columns.
+        residual = A - rowfirst.to_matrix()
+        assert np.allclose(residual[rowfirst.rowindices, :], 0.0, atol=1e-12)
+        assert np.allclose(residual[:, rowfirst.colindices], 0.0, atol=1e-12)
+
+
+def test_rank_counts_complete_pivots_only():
+    A = np.random.default_rng(7).random((5, 5))
+    aca = MatrixACA.from_matrix(A, (0, 0))
+    assert aca.rank() == 1
+
+    aca.add_pivot_row(A, 2)  # half-added pivot: row present, column not yet
+    assert aca.rank() == 1
+    assert np.allclose(aca.to_matrix(), np.outer(A[:, 0], A[0, :]) / A[0, 0])
+
+    aca.add_pivot_col(A, 3)
+    assert aca.rank() == 2
