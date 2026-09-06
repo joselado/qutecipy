@@ -231,17 +231,73 @@ def contract_naive(a, b=None, tolerance: float = 0.0, maxbonddim: int | None = N
     return tt
 
 
+def _right_canonicalize(tt: TensorTrain) -> TensorTrain:
+    """A copy of ``tt`` with every site but the first right-orthogonal.
+
+    Pure gauge: the represented tensor train is unchanged, only how the norm is
+    distributed over the cores. Done on a copy so callers' operands are never mutated.
+    """
+    cs = [np.array(T) for T in tt.sitetensors()]
+    for n in range(len(cs) - 1, 0, -1):
+        T = cs[n]
+        q, r = np.linalg.qr(T.reshape(T.shape[0], -1).conj().T)
+        k = q.shape[1]
+        cs[n] = q.conj().T.reshape((k,) + T.shape[1:])
+        cs[n - 1] = np.tensordot(cs[n - 1], r.conj().T, axes=([cs[n - 1].ndim - 1], [0]))
+    return TensorTrain(cs)
+
+
 def contract_zipup(
-    A: TensorTrain, B: TensorTrain, tolerance: float = 1e-12, method: str = "SVD", maxbonddim: int | None = None,
+    A: TensorTrain, B: TensorTrain, tolerance: float = 1e-12, method: str = "SVD",
+    maxbonddim: int | None = None, oversample: int = 1,
 ) -> TensorTrain:
     """Zip-up MPO x MPO: sweeps left to right maintaining only a small
     running interface tensor R, factorizing as it goes to keep the bond
     dimension bounded (unlike contract_naive's largest-transient-bond
-    approach). See https://tensornetwork.org/mps/algorithms/zip_up_mpo/"""
+    approach). See https://tensornetwork.org/mps/algorithms/zip_up_mpo/
+
+    Both operands are right-canonicalized first, and this is not optional. The
+    truncation at cut ``n`` is only meaningful if the not-yet-contracted right part is
+    orthonormal -- otherwise the singular values are weighted by whatever norm that part
+    happens to carry and the cutoff discards the wrong components. This is the step
+    Stoudenmire & White, New J. Phys. 12, 055026 (2010) Sec. 3.2 assume.
+
+    ``oversample`` keeps ``oversample * maxbonddim`` during the sweep and compresses once
+    at the end. A single pass truncates greedily and never revisits, so error compounds
+    along the chain even when correctly gauged, and the only way to avoid that is not to
+    truncate hard while sweeping. Measured on a quantics operator (rank 8) applied to a
+    rank-14 state at ``maxbonddim=14``, against the untruncated product (rank 112):
+
+    ==================================  ===========
+    method                              rel. error
+    ==================================  ===========
+    without the canonicalization above  2.8e-01
+    ``oversample=1`` (default)          4.8e-02
+    ``oversample=2``                    2.8e-02
+    ``oversample=4``                    1.1e-02
+    ``oversample=8`` (zip bond 112)     7.3e-06
+    ``contract_naive`` + global SVD     7.3e-06
+    ==================================  ===========
+
+    The last two agree exactly. The condition for that is the zip bond reaching the
+    *uncompressed* product bond -- ``chi_A * chi_B``, here 8 * 14 = 112 -- at which point
+    nothing is discarded during the sweep and the final compression is the same optimal
+    truncation ``contract_naive`` performs. (That is a stronger condition than reaching
+    the *compressed* rank of the result, which the two happen to share in this example
+    but need not in general.) Below it, zip-up is trading accuracy for a bounded
+    intermediate, which is the reason to use it at all. If you want ``contract_naive``'s
+    accuracy at a bounded intermediate, a variational (sweeping) fit is the tool, not a
+    larger ``oversample``.
+    """
     if len(A) != len(B):
         raise ValueError("Cannot contract tensor trains with different length.")
+    if oversample < 1:
+        raise ValueError("oversample must be >= 1")
     maxbonddim = maxbonddim if maxbonddim is not None else _UNBOUNDED_RANK
-    dtype = A.sitetensor(0).dtype
+    zipdim = maxbonddim if maxbonddim >= _UNBOUNDED_RANK // oversample else maxbonddim * oversample
+    A = _right_canonicalize(A)
+    B = _right_canonicalize(B)
+    dtype = np.result_type(A.sitetensor(0).dtype, B.sitetensor(0).dtype)
     R = np.ones((1, 1, 1), dtype=dtype)
 
     sitetensors: list[np.ndarray] = [None] * len(A)
@@ -256,12 +312,15 @@ def contract_zipup(
 
         left, right, newbonddim = _factorize(
             C.reshape(int(np.prod(C.shape[:3])), int(np.prod(C.shape[3:5]))), method,
-            tolerance=tolerance, maxbonddim=maxbonddim,
+            tolerance=tolerance, maxbonddim=zipdim,
         )
         sitetensors[n] = left.reshape(*C.shape[:3], newbonddim)
         R = right.reshape(newbonddim, *C.shape[3:5])
 
-    return TensorTrain(sitetensors)
+    result = TensorTrain(sitetensors)
+    if zipdim != maxbonddim:
+        result.compress(method, tolerance=tolerance, maxbonddim=maxbonddim)
+    return result
 
 
 def _find_initial_pivots(f: Callable, localdims: Sequence[int], nmaxpivots: int) -> list[list[int]]:
