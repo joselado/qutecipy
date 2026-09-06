@@ -96,10 +96,46 @@ class _OneSiteScan:
 
 
 class DefaultGlobalPivotFinder(AbstractGlobalPivotFinder):
-    def __init__(self, nsearch: int = 5, maxnglobalpivot: int = 5, tolmarginglobalsearch: float = 10.0):
+    def __init__(self, nsearch: int = 5, maxnglobalpivot: int = 5, tolmarginglobalsearch: float = 10.0,
+                 npivotseed: int = 2):
         self.nsearch = nsearch
         self.maxnglobalpivot = maxnglobalpivot
         self.tolmarginglobalsearch = tolmarginglobalsearch
+        self.npivotseed = npivotseed
+
+    def _pivot_seeds(self, input: GlobalPivotSearchInput) -> list[list[int]]:
+        """Search starting points derived from the pivots already found, plus their
+        index reflections.
+
+        Uniformly random starting points are a poor way to look for a region the
+        interpolation gets wrong, because they say nothing about where the function
+        actually lives. For a function supported on a small fraction of the index space
+        -- a Gaussian on a 2**30 quantics grid, say -- a random point lands in the
+        numerically-zero region essentially always, and since the scan below only visits
+        points differing from its start in *one* coordinate, it never leaves that region.
+
+        The pivots are the only known-good locations, and this class is already handed
+        them. Their *reflections* (digit ``d`` -> ``localdim-1-d``) matter as much: when a
+        function's support straddles a high-order digit boundary, the two halves differ in
+        every digit, so no single-coordinate move connects them. Concretely, a state
+        centred on a 2**30 grid has its pivot at ``100...0`` and the branch that gets
+        missed at ``011...1``. Without this, that branch is silently interpolated as zero
+        while TCI reports convergence -- measured, 3 runs in 6.
+        """
+        L = len(input.localdims)
+        seeds: list[list[int]] = []
+        for i in range(len(input.Iset)):
+            if len(seeds) >= 2 * self.npivotseed:
+                break
+            if not input.Iset[i] or not input.Jset[i]:
+                continue
+            head, tail = tuple(input.Iset[i][0]), tuple(input.Jset[i][0])
+            if len(head) + 1 + len(tail) != L:
+                continue
+            point = list(head + (0,) + tail)
+            seeds.append(point)
+            seeds.append([input.localdims[k] - 1 - v for k, v in enumerate(point)])
+        return seeds
 
     def __call__(
         self, input: GlobalPivotSearchInput, f: Callable, abstol: float,
@@ -109,6 +145,7 @@ class DefaultGlobalPivotFinder(AbstractGlobalPivotFinder):
         L = len(input.localdims)
 
         initial_points = [[rng.randrange(input.localdims[p]) for p in range(L)] for _ in range(self.nsearch)]
+        initial_points += self._pivot_seeds(input)
 
         predict = _OneSiteScan(input.current_tt)
 

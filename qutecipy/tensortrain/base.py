@@ -79,18 +79,22 @@ class AbstractTensorTrain(ABC):
         return _sum(self, dims=dims)
 
     def norm2(self) -> float:
-        def f(n):
+        """``<tt|tt>``, carried as a bond x bond environment rather than a transfer matrix.
+
+        Forming each site's transfer matrix explicitly -- ``tensordot(conj(t), t)`` over
+        the physical leg, giving ``(chi, chi, chi, chi)`` -- costs ``chi**4`` in memory
+        and time, which for a train that has not been compressed is fatal rather than
+        slow: a rank-275 core (the uncompressed product of a rank-25 operator and a
+        rank-11 state) asks for 91 GB. Contracting the environment through each core
+        instead is the same quantity in ``chi**2`` memory and ``chi**3 * d`` time.
+        """
+        env = np.ones((1, 1))
+        for n in range(len(self)):
             t = self.sitetensor(n)
             t3 = t.reshape(t.shape[0], -1, t.shape[-1])
-            # (lc, s, rc) x (l, s, r), contracted over s -> (lc, rc, l, r)
-            tct = np.tensordot(np.conj(t3), t3, axes=([1], [1]))
-            tct = np.transpose(tct, (0, 2, 1, 3))
-            return tct.reshape(tct.shape[0] * tct.shape[1], tct.shape[2] * tct.shape[3])
-
-        result = np.eye(1)
-        for n in range(len(self)):
-            result = result @ f(n)
-        return float(np.real(result.reshape(-1)[0]))
+            env = np.tensordot(env, t3, axes=([1], [0]))            # (lc, s, r)
+            env = np.tensordot(np.conj(t3), env, axes=([0, 1], [0, 1]))  # (rc, r)
+        return float(np.real(env.reshape(-1)[0]))
 
     def norm(self) -> float:
         return float(np.sqrt(self.norm2()))
